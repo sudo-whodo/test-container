@@ -81,7 +81,7 @@ jobs:
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
-        password: ${{ steps.app-token.outputs.token }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create RC tag
       run: |
@@ -167,6 +167,8 @@ jobs:
 
     - name: Analyze merged PRs for version bumps
       id: pr-analysis
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
         # Get the last release tag
         LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -180,10 +182,14 @@ jobs:
         fi
 
         # Get merge commits since last release
-        MERGE_COMMITS=$(git log $COMMIT_RANGE --merges --pretty=format:"%H %s" | grep "Merge pull request")
+        MERGE_COMMITS=$(git log $COMMIT_RANGE --merges --pretty=format:"%H %s" | grep "Merge pull request" || echo "")
 
         echo "🔍 Analyzing merged PRs since last release..."
-        echo "$MERGE_COMMITS"
+        if [ -z "$MERGE_COMMITS" ]; then
+          echo "No merge commits found in range $COMMIT_RANGE"
+        else
+          echo "$MERGE_COMMITS"
+        fi
 
         # Initialize version bump analysis
         HAS_MAJOR=false
@@ -191,56 +197,70 @@ jobs:
         HAS_PATCH=false
         HAS_CHANGES=false
 
-        # Analyze each merge commit
-        while IFS= read -r line; do
-          if [ -n "$line" ]; then
-            HAS_CHANGES=true
-            COMMIT_HASH=$(echo "$line" | cut -d' ' -f1)
-            PR_NUMBER=$(echo "$line" | grep -oE '#[0-9]+' | sed 's/#//')
+        # Analyze each merge commit (only if we have merge commits)
+        if [ -n "$MERGE_COMMITS" ]; then
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              HAS_CHANGES=true
+              COMMIT_HASH=$(echo "$line" | cut -d' ' -f1)
+              PR_NUMBER=$(echo "$line" | grep -oE '#[0-9]+' | sed 's/#//' || echo "")
 
-            if [ -n "$PR_NUMBER" ]; then
-              echo "Analyzing PR #$PR_NUMBER (commit: $COMMIT_HASH)"
+              if [ -n "$PR_NUMBER" ]; then
+                echo "Analyzing PR #$PR_NUMBER (commit: $COMMIT_HASH)"
 
-              # Get PR labels using GitHub API
-              PR_LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name' 2>/dev/null || echo "")
-              echo "PR #$PR_NUMBER labels: $PR_LABELS"
+                # Get PR labels using GitHub API (with error handling)
+                PR_LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+                echo "PR #$PR_NUMBER labels: $PR_LABELS"
 
-              # Check for version bump indicators in labels
-              if echo "$PR_LABELS" | grep -qE "^(breaking-change|major)$"; then
-                echo "  → Major version bump detected (breaking change)"
-                HAS_MAJOR=true
-              elif echo "$PR_LABELS" | grep -qE "^(feature|minor)$"; then
-                echo "  → Minor version bump detected (feature)"
-                HAS_MINOR=true
-              elif echo "$PR_LABELS" | grep -qE "^(bugfix|fix|patch)$"; then
-                echo "  → Patch version bump detected (fix)"
-                HAS_PATCH=true
-              elif echo "$PR_LABELS" | grep -qE "^(no-release|skip-release)$"; then
-                echo "  → No release (skip-release label)"
-              else
-                # Fallback: check PR title for conventional commit format
-                PR_TITLE=$(gh pr view $PR_NUMBER --json title --jq '.title' 2>/dev/null || echo "")
-                echo "  PR title: $PR_TITLE"
-
-                if echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?!:|BREAKING CHANGE"; then
-                  echo "  → Major version bump detected (breaking change in title)"
+                # Check for version bump indicators in labels
+                if echo "$PR_LABELS" | grep -qE "^(breaking-change|major)$"; then
+                  echo "  → Major version bump detected (breaking change)"
                   HAS_MAJOR=true
-                elif echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?:"; then
-                  echo "  → Minor version bump detected (feature in title)"
+                elif echo "$PR_LABELS" | grep -qE "^(feature|minor)$"; then
+                  echo "  → Minor version bump detected (feature)"
                   HAS_MINOR=true
-                elif echo "$PR_TITLE" | grep -qE "^(fix|perf|refactor)(\(.+\))?:"; then
-                  echo "  → Patch version bump detected (fix in title)"
+                elif echo "$PR_LABELS" | grep -qE "^(bugfix|fix|patch)$"; then
+                  echo "  → Patch version bump detected (fix)"
                   HAS_PATCH=true
-                elif echo "$PR_TITLE" | grep -qE "^(docs|style|test|build|ci|chore)(\(.+\))?:"; then
-                  echo "  → No version bump (docs/chore in title)"
+                elif echo "$PR_LABELS" | grep -qE "^(no-release|skip-release)$"; then
+                  echo "  → No release (skip-release label)"
                 else
-                  echo "  → Default to patch version bump"
-                  HAS_PATCH=true
+                  # Fallback: check PR title for conventional commit format
+                  PR_TITLE=$(gh pr view $PR_NUMBER --json title --jq '.title' 2>/dev/null || echo "")
+                  echo "  PR title: $PR_TITLE"
+
+                  if echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?!:|BREAKING CHANGE"; then
+                    echo "  → Major version bump detected (breaking change in title)"
+                    HAS_MAJOR=true
+                  elif echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?:"; then
+                    echo "  → Minor version bump detected (feature in title)"
+                    HAS_MINOR=true
+                  elif echo "$PR_TITLE" | grep -qE "^(fix|perf|refactor)(\(.+\))?:"; then
+                    echo "  → Patch version bump detected (fix in title)"
+                    HAS_PATCH=true
+                  elif echo "$PR_TITLE" | grep -qE "^(docs|style|test|build|ci|chore)(\(.+\))?:"; then
+                    echo "  → No version bump (docs/chore in title)"
+                  else
+                    echo "  → Default to patch version bump"
+                    HAS_PATCH=true
+                  fi
                 fi
+              else
+                echo "  → No PR number found in commit message"
+                HAS_PATCH=true  # Default to patch for non-PR commits
               fi
             fi
+          done <<< "$MERGE_COMMITS"
+        else
+          echo "No merge commits to analyze, checking for direct commits..."
+          # Check if there are any commits since last tag
+          COMMIT_COUNT=$(git rev-list $COMMIT_RANGE --count 2>/dev/null || echo "0")
+          if [ "$COMMIT_COUNT" -gt 0 ]; then
+            echo "Found $COMMIT_COUNT commits since last release, defaulting to patch version"
+            HAS_CHANGES=true
+            HAS_PATCH=true
           fi
-        done <<< "$MERGE_COMMITS"
+        fi
 
         # Determine version bump type (highest priority wins)
         if [ "$HAS_MAJOR" = true ]; then
@@ -355,7 +375,7 @@ jobs:
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
-        password: ${{ steps.app-token.outputs.token }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create production release tag
       if: steps.version.outputs.has_release == 'true'
