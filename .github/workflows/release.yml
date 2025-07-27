@@ -191,8 +191,18 @@ jobs:
           CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
           echo "Current version: $CURRENT_VERSION"
 
+          # Ensure we have a valid version format
+          if [ -z "$CURRENT_VERSION" ] || [ "$CURRENT_VERSION" = "" ]; then
+            CURRENT_VERSION="0.0.0"
+          fi
+
           # Parse current version
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          # Ensure all version parts are numbers
+          MAJOR=${MAJOR:-0}
+          MINOR=${MINOR:-0}
+          PATCH=${PATCH:-0}
 
           # Bump version based on PR analysis
           case "$PR_VERSION_BUMP" in
