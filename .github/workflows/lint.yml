@@ -1,0 +1,258 @@
+name: Python Linting
+
+on:
+  push:
+    branches-ignore: [ main ]  # Run on push to any branch except main
+  pull_request:
+    branches: [ main ]  # Run on PRs targeting main
+  workflow_dispatch:   # Allow manual triggering
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Generate GitHub App Token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/tests/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pylint
+
+        # Install project dependencies if they exist
+        if [ -f requirements.txt ]; then
+          echo "Installing main requirements..."
+          pip install -r requirements.txt
+        fi
+
+        if [ -f tests/requirements.txt ]; then
+          echo "Installing test requirements..."
+          pip install -r tests/requirements.txt
+        fi
+
+    - name: Find Python files
+      id: find-files
+      run: |
+        # Find all Python files, excluding common directories to ignore
+        PYTHON_FILES=$(find . -name "*.py" \
+          -not -path "./.git/*" \
+          -not -path "./.venv/*" \
+          -not -path "./venv/*" \
+          -not -path "./__pycache__/*" \
+          -not -path "./.pytest_cache/*" \
+          -not -path "./build/*" \
+          -not -path "./dist/*" \
+          -not -path "./*.egg-info/*" \
+          | tr '\n' ' ')
+
+        echo "python_files=${PYTHON_FILES}" >> $GITHUB_OUTPUT
+        echo "Found Python files: ${PYTHON_FILES}"
+
+        # Count files for summary
+        FILE_COUNT=$(echo "${PYTHON_FILES}" | wc -w)
+        echo "file_count=${FILE_COUNT}" >> $GITHUB_OUTPUT
+        echo "Total Python files to lint: ${FILE_COUNT}"
+
+    - name: Run Pylint
+      id: pylint
+      run: |
+        echo "🔍 Running Pylint with configuration from .config/.pylintrc"
+        echo "============================================================"
+
+        # Run pylint with the config file and capture output
+        PYLINT_OUTPUT_FILE="pylint-output.txt"
+        PYLINT_SCORE_FILE="pylint-score.txt"
+
+        # Run pylint and capture both stdout and return code
+        set +e  # Don't exit on non-zero return code
+        pylint --rcfile=.config/.pylintrc ${{ steps.find-files.outputs.python_files }} > "${PYLINT_OUTPUT_FILE}" 2>&1
+        PYLINT_EXIT_CODE=$?
+        set -e
+
+        # Display the output
+        cat "${PYLINT_OUTPUT_FILE}"
+
+        # Extract score if available
+        if grep -q "Your code has been rated at" "${PYLINT_OUTPUT_FILE}"; then
+          SCORE=$(grep "Your code has been rated at" "${PYLINT_OUTPUT_FILE}" | sed 's/.*rated at \([0-9.]*\).*/\1/')
+          echo "pylint_score=${SCORE}" >> $GITHUB_OUTPUT
+          echo "Pylint Score: ${SCORE}/10"
+        else
+          echo "pylint_score=N/A" >> $GITHUB_OUTPUT
+          echo "Pylint Score: N/A"
+        fi
+
+        # Count issues by type
+        ERROR_COUNT=$(grep -c "E[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
+        WARNING_COUNT=$(grep -c "W[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
+        CONVENTION_COUNT=$(grep -c "C[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
+        REFACTOR_COUNT=$(grep -c "R[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
+
+        echo "error_count=${ERROR_COUNT}" >> $GITHUB_OUTPUT
+        echo "warning_count=${WARNING_COUNT}" >> $GITHUB_OUTPUT
+        echo "convention_count=${CONVENTION_COUNT}" >> $GITHUB_OUTPUT
+        echo "refactor_count=${REFACTOR_COUNT}" >> $GITHUB_OUTPUT
+
+        echo "📊 Issue Summary:"
+        echo "  Errors: ${ERROR_COUNT}"
+        echo "  Warnings: ${WARNING_COUNT}"
+        echo "  Conventions: ${CONVENTION_COUNT}"
+        echo "  Refactor suggestions: ${REFACTOR_COUNT}"
+
+        # Save exit code for later use
+        echo "pylint_exit_code=${PYLINT_EXIT_CODE}" >> $GITHUB_OUTPUT
+
+        # Create a summary for the job
+        echo "## 🔍 Pylint Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Files analyzed:** ${{ steps.find-files.outputs.file_count }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Score:** ${SCORE:-N/A}/10" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Issue Type | Count |" >> $GITHUB_STEP_SUMMARY
+        echo "|------------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Errors | ${ERROR_COUNT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Warnings | ${WARNING_COUNT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Conventions | ${CONVENTION_COUNT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Refactor | ${REFACTOR_COUNT} |" >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload Pylint report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pylint-report
+        path: pylint-output.txt
+        retention-days: 30
+
+    - name: Comment on PR (if applicable)
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ steps.app-token.outputs.token }}
+        script: |
+          const fs = require('fs');
+
+          // Read pylint output
+          let pylintOutput = '';
+          try {
+            pylintOutput = fs.readFileSync('pylint-output.txt', 'utf8');
+          } catch (error) {
+            pylintOutput = 'Could not read pylint output file.';
+          }
+
+          const score = '${{ steps.pylint.outputs.pylint_score }}';
+          const errorCount = '${{ steps.pylint.outputs.error_count }}';
+          const warningCount = '${{ steps.pylint.outputs.warning_count }}';
+          const conventionCount = '${{ steps.pylint.outputs.convention_count }}';
+          const refactorCount = '${{ steps.pylint.outputs.refactor_count }}';
+          const fileCount = '${{ steps.find-files.outputs.file_count }}';
+          const exitCode = '${{ steps.pylint.outputs.pylint_exit_code }}';
+
+          // Determine status emoji
+          let statusEmoji = '✅';
+          let statusText = 'Passed';
+          if (exitCode !== '0') {
+            statusEmoji = '⚠️';
+            statusText = 'Issues Found';
+          }
+
+          // Create comment body
+          const body = `## ${statusEmoji} Pylint Analysis Results
+
+          **Status:** ${statusText}
+          **Files Analyzed:** ${fileCount}
+          **Score:** ${score}/10
+
+          ### Issue Summary
+          | Type | Count |
+          |------|-------|
+          | 🔴 Errors | ${errorCount} |
+          | 🟡 Warnings | ${warningCount} |
+          | 🔵 Conventions | ${conventionCount} |
+          | 🟣 Refactor | ${refactorCount} |
+
+          <details>
+          <summary>📋 Full Pylint Output</summary>
+
+          \`\`\`
+          ${pylintOutput.length > 50000 ? pylintOutput.substring(0, 50000) + '\n... (output truncated)' : pylintOutput}
+          \`\`\`
+
+          </details>
+
+          ---
+          *Pylint configuration: \`.config/.pylintrc\`*
+          `;
+
+          // Find existing comment
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const existingComment = comments.data.find(comment =>
+            comment.user.login === 'github-actions[bot]' &&
+            comment.body.includes('Pylint Analysis Results')
+          );
+
+          if (existingComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existingComment.id,
+              body: body
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+          }
+
+    - name: Set exit code based on Pylint results
+      run: |
+        EXIT_CODE=${{ steps.pylint.outputs.pylint_exit_code }}
+        ERROR_COUNT=${{ steps.pylint.outputs.error_count }}
+
+        echo "Pylint exit code: ${EXIT_CODE}"
+        echo "Error count: ${ERROR_COUNT}"
+
+        # Fail the job if there are errors (you can adjust this logic)
+        if [ "${ERROR_COUNT}" -gt "0" ]; then
+          echo "❌ Failing due to Pylint errors"
+          exit 1
+        elif [ "${EXIT_CODE}" -ne "0" ]; then
+          echo "⚠️ Pylint found issues but no errors - job will pass"
+          exit 0
+        else
+          echo "✅ Pylint passed with no issues"
+          exit 0
+        fi

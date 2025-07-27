@@ -1,0 +1,58 @@
+# HTTP Endpoint Testing Configuration
+# Simple HTTP status code checks for APIs running on private IP addresses
+# Used to confirm APIs are running and responding
+
+# List of IP addresses to test (optional)
+# If empty or not specified, will auto-detect the server's private IP address
+ip_addresses: []
+# Example:
+# ip_addresses:
+#   - "192.168.1.100"
+#   - "10.0.0.50"
+#   - "172.16.0.10"
+
+# Default port to test
+default_port: 8080
+
+# HTTP endpoints to test
+endpoints:
+  - path: "/"
+    description: "Root endpoint"
+    expected_status: 200
+    required: true
+
+  - path: "/health"
+    description: "Health check endpoint"
+    expected_status: 200
+    required: true
+
+  - path: "/status"
+    description: "Status endpoint"
+    expected_status: 200
+    required: false
+
+  - path: "/api/v1/health"
+    description: "API health endpoint"
+    expected_status: 200
+    required: false
+
+  - path: "/metrics"
+    description: "Metrics endpoint"
+    expected_status: 200
+    required: false
+
+# Connection configuration
+connection_config:
+  # Connection timeout in seconds
+  timeout: 5
+
+  # Follow redirects
+  allow_redirects: true
+
+  # Maximum number of redirects to follow
+  max_redirects: 3
+
+  # Custom headers to send with requests
+  headers:
+    User-Agent: "HTTP-Endpoint-Test/1.0"
+    Accept: "*/*"

@@ -1,0 +1,164 @@
+name: PR Version Analyzer
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+    branches: [ main ]
+
+jobs:
+  analyze-version:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Generate GitHub App Token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Analyze PR labels for version bump
+      id: version-analysis
+      run: |
+        # Get PR labels
+        PR_LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+        echo "PR Labels: $PR_LABELS"
+
+        # Initialize version bump type
+        VERSION_BUMP="none"
+        RELEASE_TYPE="patch"  # default fallback
+
+        # Check for version bump labels (highest priority wins)
+        if echo "$PR_LABELS" | grep -q "breaking-change\|major"; then
+          VERSION_BUMP="major"
+          RELEASE_TYPE="major"
+        elif echo "$PR_LABELS" | grep -q "feature\|minor"; then
+          VERSION_BUMP="minor"
+          RELEASE_TYPE="minor"
+        elif echo "$PR_LABELS" | grep -q "bugfix\|fix\|patch"; then
+          VERSION_BUMP="patch"
+          RELEASE_TYPE="patch"
+        elif echo "$PR_LABELS" | grep -q "no-release\|skip-release"; then
+          VERSION_BUMP="none"
+          RELEASE_TYPE="none"
+        else
+          # No explicit version labels, check for conventional commit patterns in PR title
+          PR_TITLE='${{ github.event.pull_request.title }}'
+          echo "PR Title: $PR_TITLE"
+
+          if echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?!:|BREAKING CHANGE"; then
+            VERSION_BUMP="major"
+            RELEASE_TYPE="major"
+          elif echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?:"; then
+            VERSION_BUMP="minor"
+            RELEASE_TYPE="minor"
+          elif echo "$PR_TITLE" | grep -qE "^(fix|perf|refactor)(\(.+\))?:"; then
+            VERSION_BUMP="patch"
+            RELEASE_TYPE="patch"
+          elif echo "$PR_TITLE" | grep -qE "^(docs|style|test|build|ci|chore)(\(.+\))?:"; then
+            VERSION_BUMP="none"
+            RELEASE_TYPE="none"
+          else
+            # Default to patch for any other changes
+            VERSION_BUMP="patch"
+            RELEASE_TYPE="patch"
+          fi
+        fi
+
+        echo "version_bump=${VERSION_BUMP}" >> $GITHUB_OUTPUT
+        echo "release_type=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
+
+        echo "🔍 Version Analysis Results:"
+        echo "  Version Bump: ${VERSION_BUMP}"
+        echo "  Release Type: ${RELEASE_TYPE}"
+
+    - name: Create version bump comment
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ steps.app-token.outputs.token }}
+        script: |
+          const versionBump = '${{ steps.version-analysis.outputs.version_bump }}';
+          const releaseType = '${{ steps.version-analysis.outputs.release_type }}';
+
+          const versionEmoji = {
+            'major': '🚨',
+            'minor': '✨',
+            'patch': '🐛',
+            'none': '📝'
+          };
+
+          const versionDescription = {
+            'major': 'Major version bump (breaking changes)',
+            'minor': 'Minor version bump (new features)',
+            'patch': 'Patch version bump (bug fixes)',
+            'none': 'No version bump (documentation, chores, etc.)'
+          };
+
+          const emoji = versionEmoji[versionBump] || '❓';
+          const description = versionDescription[versionBump] || 'Unknown version bump type';
+
+          const body = `## ${emoji} Version Impact Analysis
+
+          **Detected Version Bump:** \`${versionBump}\`
+
+          **Description:** ${description}
+
+          ### How this was determined:
+          - **PR Labels:** ${JSON.stringify(context.payload.pull_request.labels.map(l => l.name))}
+          - **PR Title:** "${context.payload.pull_request.title}"
+
+          ### Available Labels for Version Control:
+          - \`major\` or \`breaking-change\`: Major version bump (1.0.0 → 2.0.0)
+          - \`minor\` or \`feature\`: Minor version bump (1.0.0 → 1.1.0)
+          - \`patch\`, \`bugfix\`, or \`fix\`: Patch version bump (1.0.0 → 1.0.1)
+          - \`no-release\` or \`skip-release\`: No version bump
+
+          ### Fallback Logic:
+          1. **PR Labels** take highest priority
+          2. **PR Title** conventional commit format as fallback
+          3. **Default to patch** if no clear indication
+
+          *This comment will be updated if labels change.*`;
+
+          // Find existing comment
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const existingComment = comments.data.find(comment =>
+            comment.user.login === 'github-actions[bot]' &&
+            comment.body.includes('Version Impact Analysis')
+          );
+
+          if (existingComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existingComment.id,
+              body: body
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+          }
+
+    - name: Save version info to file
+      run: |
+        mkdir -p .github/pr-analysis
+        echo '${{ steps.version-analysis.outputs.version_bump }}' > .github/pr-analysis/version-bump-${{ github.event.pull_request.number }}.txt
+        echo '${{ steps.version-analysis.outputs.release_type }}' > .github/pr-analysis/release-type-${{ github.event.pull_request.number }}.txt
+
+        echo "📁 Saved version analysis to:"
+        echo "  .github/pr-analysis/version-bump-${{ github.event.pull_request.number }}.txt"
+        echo "  .github/pr-analysis/release-type-${{ github.event.pull_request.number }}.txt"
