@@ -46,7 +46,7 @@ jobs:
           echo "✅ Dependency update detected"
 
           # Analyze update type and severity
-          if echo "$PR_TITLE" | grep -qE "^(pip|pip-tests|docker):.*"; then
+          if echo "$PR_TITLE" | grep -qE "^(pip|pip-tests|docker|actions):.*"; then
             echo "✅ Valid dependency prefix found"
 
             # Check for patch updates (safer to auto-merge)
@@ -104,6 +104,14 @@ jobs:
               AUTO_APPROVE=true
               AUTO_MERGE=true
               REASON="Test dependency - safe to auto-merge"
+            fi
+
+            # Special handling for GitHub Actions (generally safe to auto-merge)
+            if echo "$PR_LABELS" | grep -q "github-actions\|ci"; then
+              echo "⚙️ GitHub Actions update detected"
+              AUTO_APPROVE=true
+              AUTO_MERGE=true
+              REASON="GitHub Actions update - safe to auto-merge"
             fi
           fi
         fi
