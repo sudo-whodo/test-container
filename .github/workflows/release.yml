@@ -5,6 +5,21 @@ on:
     types: [ closed ]
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force create a release even if no changes detected'
+        required: false
+        default: false
+        type: boolean
+      release_type:
+        description: 'Type of release to create'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
 
 env:
   CONTAINER_NAME: test-api-release-container
@@ -310,6 +325,15 @@ jobs:
         USE_SEMANTIC="${{ env.use_semantic }}"
         PR_VERSION_BUMP="${{ steps.pr-analysis.outputs.pr_version_bump }}"
         HAS_CHANGES="${{ steps.pr-analysis.outputs.has_changes }}"
+        FORCE_RELEASE="${{ github.event.inputs.force_release }}"
+        MANUAL_RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+
+        echo "🔧 Version Calculation Inputs:"
+        echo "  Use semantic: $USE_SEMANTIC"
+        echo "  PR version bump: $PR_VERSION_BUMP"
+        echo "  Has changes: $HAS_CHANGES"
+        echo "  Force release: $FORCE_RELEASE"
+        echo "  Manual release type: $MANUAL_RELEASE_TYPE"
 
         if [ "$USE_SEMANTIC" = "true" ]; then
           # Use semantic-release version
@@ -359,10 +383,50 @@ jobs:
           echo "has_release=true" >> $GITHUB_OUTPUT
           echo "version_source=pr-labels" >> $GITHUB_OUTPUT
           echo "✅ Using PR-based version: v${NEW_VERSION} (${PR_VERSION_BUMP} bump)"
+        elif [ "$FORCE_RELEASE" = "true" ]; then
+          # Force release with manual version type
+          CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+          echo "Current version: $CURRENT_VERSION"
+
+          # Ensure we have a valid version format
+          if [ -z "$CURRENT_VERSION" ] || [ "$CURRENT_VERSION" = "" ]; then
+            CURRENT_VERSION="0.0.0"
+          fi
+
+          # Parse current version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          # Ensure all version parts are numbers
+          MAJOR=${MAJOR:-0}
+          MINOR=${MINOR:-0}
+          PATCH=${PATCH:-0}
+
+          # Bump version based on manual input
+          case "$MANUAL_RELEASE_TYPE" in
+            "major")
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            "minor")
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            "patch"|*)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "next_version=v${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "version_number=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "has_release=true" >> $GITHUB_OUTPUT
+          echo "version_source=manual-force" >> $GITHUB_OUTPUT
+          echo "✅ Force release: v${NEW_VERSION} (${MANUAL_RELEASE_TYPE} bump)"
         else
           echo "has_release=false" >> $GITHUB_OUTPUT
           echo "version_source=none" >> $GITHUB_OUTPUT
-          echo "ℹ️ No release will be created (no relevant changes)"
+          echo "ℹ️ No release will be created (no relevant changes, use force_release=true to override)"
         fi
 
     - name: Set up Docker Buildx
