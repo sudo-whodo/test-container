@@ -1,0 +1,321 @@
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CONTAINER_NAME: test-api-release-container
+  IMAGE_NAME: test-api
+  PORT: 8080
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  release-candidate:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'skip ci')
+
+    steps:
+    - name: Generate GitHub App Token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ steps.app-token.outputs.token }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install semantic-release
+      run: |
+        npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Analyze merged PRs for version bumps
+      id: pr-analysis
+      run: |
+        # Get the last release tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+        if [ -z "$LAST_TAG" ]; then
+          echo "No previous tags found, analyzing all commits"
+          COMMIT_RANGE="HEAD"
+        else
+          echo "Last tag: $LAST_TAG"
+          COMMIT_RANGE="${LAST_TAG}..HEAD"
+        fi
+
+        # Get merge commits since last release
+        MERGE_COMMITS=$(git log $COMMIT_RANGE --merges --pretty=format:"%H %s" | grep "Merge pull request")
+
+        echo "🔍 Analyzing merged PRs since last release..."
+        echo "$MERGE_COMMITS"
+
+        # Initialize version bump analysis
+        HAS_MAJOR=false
+        HAS_MINOR=false
+        HAS_PATCH=false
+        HAS_CHANGES=false
+
+        # Analyze each merge commit
+        while IFS= read -r line; do
+          if [ -n "$line" ]; then
+            HAS_CHANGES=true
+            COMMIT_HASH=$(echo "$line" | cut -d' ' -f1)
+            PR_NUMBER=$(echo "$line" | grep -oE '#[0-9]+' | sed 's/#//')
+
+            if [ -n "$PR_NUMBER" ]; then
+              echo "Analyzing PR #$PR_NUMBER (commit: $COMMIT_HASH)"
+
+              # Get PR labels using GitHub API
+              PR_LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+              echo "PR #$PR_NUMBER labels: $PR_LABELS"
+
+              # Check for version bump indicators in labels
+              if echo "$PR_LABELS" | grep -qE "^(breaking-change|major)$"; then
+                echo "  → Major version bump detected (breaking change)"
+                HAS_MAJOR=true
+              elif echo "$PR_LABELS" | grep -qE "^(feature|minor)$"; then
+                echo "  → Minor version bump detected (feature)"
+                HAS_MINOR=true
+              elif echo "$PR_LABELS" | grep -qE "^(bugfix|fix|patch)$"; then
+                echo "  → Patch version bump detected (fix)"
+                HAS_PATCH=true
+              elif echo "$PR_LABELS" | grep -qE "^(no-release|skip-release)$"; then
+                echo "  → No release (skip-release label)"
+              else
+                # Fallback: check PR title for conventional commit format
+                PR_TITLE=$(gh pr view $PR_NUMBER --json title --jq '.title' 2>/dev/null || echo "")
+                echo "  PR title: $PR_TITLE"
+
+                if echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?!:|BREAKING CHANGE"; then
+                  echo "  → Major version bump detected (breaking change in title)"
+                  HAS_MAJOR=true
+                elif echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?:"; then
+                  echo "  → Minor version bump detected (feature in title)"
+                  HAS_MINOR=true
+                elif echo "$PR_TITLE" | grep -qE "^(fix|perf|refactor)(\(.+\))?:"; then
+                  echo "  → Patch version bump detected (fix in title)"
+                  HAS_PATCH=true
+                elif echo "$PR_TITLE" | grep -qE "^(docs|style|test|build|ci|chore)(\(.+\))?:"; then
+                  echo "  → No version bump (docs/chore in title)"
+                else
+                  echo "  → Default to patch version bump"
+                  HAS_PATCH=true
+                fi
+              fi
+            fi
+          fi
+        done <<< "$MERGE_COMMITS"
+
+        # Determine version bump type (highest priority wins)
+        if [ "$HAS_MAJOR" = true ]; then
+          VERSION_BUMP="major"
+        elif [ "$HAS_MINOR" = true ]; then
+          VERSION_BUMP="minor"
+        elif [ "$HAS_PATCH" = true ]; then
+          VERSION_BUMP="patch"
+        else
+          VERSION_BUMP="none"
+        fi
+
+        echo "pr_version_bump=${VERSION_BUMP}" >> $GITHUB_OUTPUT
+        echo "has_changes=${HAS_CHANGES}" >> $GITHUB_OUTPUT
+
+        echo ""
+        echo "📊 PR Analysis Summary:"
+        echo "  Has changes: $HAS_CHANGES"
+        echo "  Version bump: $VERSION_BUMP"
+        echo "  Major changes: $HAS_MAJOR"
+        echo "  Minor changes: $HAS_MINOR"
+        echo "  Patch changes: $HAS_PATCH"
+
+    - name: Run semantic-release with PR fallback
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        # First try semantic-release normally
+        echo "🚀 Running semantic-release (conventional commits)..."
+        npx semantic-release --dry-run > semantic-release-output.txt 2>&1 || true
+        cat semantic-release-output.txt
+
+        # Check if semantic-release found a version
+        if grep -q "The next release version is" semantic-release-output.txt; then
+          echo "✅ Semantic-release detected version bump from conventional commits"
+          SEMANTIC_VERSION=$(grep "The next release version is" semantic-release-output.txt | sed 's/.*The next release version is \([0-9.]*\).*/\1/')
+          echo "semantic_version=${SEMANTIC_VERSION}" >> $GITHUB_OUTPUT
+          echo "use_semantic=true" >> $GITHUB_OUTPUT
+        else
+          echo "⚠️ No version detected by semantic-release, using PR analysis fallback"
+          echo "use_semantic=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Calculate fallback version
+      id: version
+      run: |
+        USE_SEMANTIC="${{ env.use_semantic }}"
+        PR_VERSION_BUMP="${{ steps.pr-analysis.outputs.pr_version_bump }}"
+        HAS_CHANGES="${{ steps.pr-analysis.outputs.has_changes }}"
+
+        if [ "$USE_SEMANTIC" = "true" ]; then
+          # Use semantic-release version
+          NEXT_VERSION="${{ env.semantic_version }}"
+          echo "next_version=v${NEXT_VERSION}" >> $GITHUB_OUTPUT
+          echo "version_number=${NEXT_VERSION}" >> $GITHUB_OUTPUT
+          echo "has_release=true" >> $GITHUB_OUTPUT
+          echo "version_source=semantic-release" >> $GITHUB_OUTPUT
+          echo "✅ Using semantic-release version: v${NEXT_VERSION}"
+        elif [ "$HAS_CHANGES" = "true" ] && [ "$PR_VERSION_BUMP" != "none" ]; then
+          # Calculate version using PR analysis
+          CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+          echo "Current version: $CURRENT_VERSION"
+
+          # Parse current version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          # Bump version based on PR analysis
+          case "$PR_VERSION_BUMP" in
+            "major")
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            "minor")
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            "patch")
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "next_version=v${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "version_number=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "has_release=true" >> $GITHUB_OUTPUT
+          echo "version_source=pr-labels" >> $GITHUB_OUTPUT
+          echo "✅ Using PR-based version: v${NEW_VERSION} (${PR_VERSION_BUMP} bump)"
+        else
+          echo "has_release=false" >> $GITHUB_OUTPUT
+          echo "version_source=none" >> $GITHUB_OUTPUT
+          echo "ℹ️ No release will be created (no relevant changes)"
+        fi
+
+    - name: Set up Docker Buildx
+      if: steps.version.outputs.has_release == 'true'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and tag Docker images as RC
+      if: steps.version.outputs.has_release == 'true'
+      run: |
+        VERSION=${{ steps.version.outputs.version_number }}
+        docker build -t ${{ env.IMAGE_NAME }}:${VERSION}-rc .
+        docker build -t ${{ env.IMAGE_NAME }}:latest-rc .
+        echo "Built Docker images:"
+        echo "  - ${{ env.IMAGE_NAME }}:${VERSION}-rc"
+        echo "  - ${{ env.IMAGE_NAME }}:latest-rc"
+
+    - name: Create RC tag
+      if: steps.version.outputs.has_release == 'true'
+      run: |
+        VERSION=${{ steps.version.outputs.next_version }}
+        RC_TAG="${VERSION}-rc"
+        git tag -a "$RC_TAG" -m "Release candidate for $VERSION"
+        git push origin "$RC_TAG"
+        echo "Created RC tag: $RC_TAG"
+
+    - name: Create RC GitHub release
+      if: steps.version.outputs.has_release == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        VERSION=${{ steps.version.outputs.next_version }}
+        RC_TAG="${VERSION}-rc"
+        gh release create "$RC_TAG" \
+          --title "Release Candidate $RC_TAG" \
+          --notes "🚀 Release candidate for $VERSION
+
+        This is a pre-release version for testing. The final release will be created after additional validation.
+
+        **Docker Images:**
+        - \`${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}-rc\`
+        - \`${{ env.IMAGE_NAME }}:latest-rc\`
+
+        **Changes in this release:**
+        $(git log $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD --pretty=format:'- %s' --no-merges)" \
+          --prerelease
+
+  production-release:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'skip ci') && github.event_name == 'workflow_dispatch'
+
+    steps:
+    - name: Generate GitHub App Token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ steps.app-token.outputs.token }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install semantic-release
+      run: |
+        npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Run semantic-release (production)
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: semantic-release
+
+    - name: Get new version
+      id: version
+      run: |
+        VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "version_number=${VERSION#v}" >> $GITHUB_OUTPUT
+
+    - name: Set up Docker Buildx
+      if: steps.version.outputs.version != 'v0.0.0'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and tag Docker images for production
+      if: steps.version.outputs.version != 'v0.0.0'
+      run: |
+        VERSION=${{ steps.version.outputs.version_number }}
+        docker build -t ${{ env.IMAGE_NAME }}:${VERSION} .
+        docker build -t ${{ env.IMAGE_NAME }}:latest .
+        echo "Built production Docker images:"
+        echo "  - ${{ env.IMAGE_NAME }}:${VERSION}"
+        echo "  - ${{ env.IMAGE_NAME }}:latest"

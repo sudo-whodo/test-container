@@ -1,0 +1,82 @@
+name: Test API Endpoints
+
+on:
+  push:
+    branches: [ "**" ]  # Run on push to any branch
+  pull_request:
+    branches: [ main ]  # Run on PRs targeting main
+  workflow_dispatch:   # Allow manual triggering
+
+env:
+  CONTAINER_NAME: test-api-container
+  IMAGE_NAME: test-api:latest
+  PORT: 8080
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install pipx
+      run: |
+        python -m pip install --user pipx
+        python -m pipx ensurepath
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Install pytest with pipx
+      run: |
+        pipx install pytest
+
+    - name: Inject test requirements into pytest environment
+      run: |
+        pipx inject pytest requests PyYAML netifaces
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ env.IMAGE_NAME }} .
+
+    - name: Start container
+      run: |
+        docker run -d \
+          --name ${{ env.CONTAINER_NAME }} \
+          -p ${{ env.PORT }}:${{ env.PORT }} \
+          ${{ env.IMAGE_NAME }}
+
+    - name: Wait for container to be ready
+      run: |
+        echo "Waiting for API to be ready..."
+        timeout 60 bash -c 'until curl -f http://localhost:${{ env.PORT }}/health; do sleep 2; done'
+        echo "API is ready!"
+
+    - name: Show container logs (for debugging)
+      run: |
+        echo "Container logs:"
+        docker logs ${{ env.CONTAINER_NAME }}
+
+    - name: Run all pytest tests
+      run: |
+        cd tests
+        pytest . -v -s --tb=short
+
+    - name: Show container logs on failure
+      if: failure()
+      run: |
+        echo "Container logs on failure:"
+        docker logs ${{ env.CONTAINER_NAME }}
+
+    - name: Stop and remove container
+      if: always()
+      run: |
+        docker stop ${{ env.CONTAINER_NAME }} || true
+        docker rm ${{ env.CONTAINER_NAME }} || true

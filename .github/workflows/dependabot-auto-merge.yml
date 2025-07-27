@@ -1,0 +1,257 @@
+name: Dependabot Auto-Merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dependabot-auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+
+    steps:
+    - name: Generate GitHub App Token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+
+    - name: Analyze Dependabot PR
+      id: analyze
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        # Get PR details
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        PR_BODY="${{ github.event.pull_request.body }}"
+        PR_LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+
+        echo "PR Title: $PR_TITLE"
+        echo "PR Labels: $PR_LABELS"
+
+        # Initialize approval criteria
+        AUTO_APPROVE=false
+        AUTO_MERGE=false
+        MERGE_METHOD="squash"
+        REASON=""
+
+        # Check if this is a dependency update
+        if echo "$PR_LABELS" | grep -q "dependencies"; then
+          echo "✅ Dependency update detected"
+
+          # Analyze update type and severity
+          if echo "$PR_TITLE" | grep -qE "^(pip|pip-tests|docker):.*"; then
+            echo "✅ Valid dependency prefix found"
+
+            # Check for patch updates (safer to auto-merge)
+            if echo "$PR_TITLE" | grep -qE "bump.*from.*[0-9]+\.[0-9]+\.[0-9]+.*to.*[0-9]+\.[0-9]+\.[0-9]+"; then
+              # Extract version numbers to determine update type
+              OLD_VERSION=$(echo "$PR_TITLE" | grep -oE "from [0-9]+\.[0-9]+\.[0-9]+" | sed 's/from //')
+              NEW_VERSION=$(echo "$PR_TITLE" | grep -oE "to [0-9]+\.[0-9]+\.[0-9]+" | sed 's/to //')
+
+              echo "Version change: $OLD_VERSION → $NEW_VERSION"
+
+              # Parse versions
+              OLD_MAJOR=$(echo "$OLD_VERSION" | cut -d. -f1)
+              OLD_MINOR=$(echo "$OLD_VERSION" | cut -d. -f2)
+              OLD_PATCH=$(echo "$OLD_VERSION" | cut -d. -f3)
+
+              NEW_MAJOR=$(echo "$NEW_VERSION" | cut -d. -f1)
+              NEW_MINOR=$(echo "$NEW_VERSION" | cut -d. -f2)
+              NEW_PATCH=$(echo "$NEW_VERSION" | cut -d. -f3)
+
+              # Determine update type
+              if [ "$OLD_MAJOR" != "$NEW_MAJOR" ]; then
+                echo "⚠️ Major version update detected"
+                AUTO_APPROVE=true
+                AUTO_MERGE=false
+                REASON="Major version update - requires manual review"
+              elif [ "$OLD_MINOR" != "$NEW_MINOR" ]; then
+                echo "✨ Minor version update detected"
+                AUTO_APPROVE=true
+                AUTO_MERGE=true
+                REASON="Minor version update - safe to auto-merge"
+              elif [ "$OLD_PATCH" != "$NEW_PATCH" ]; then
+                echo "🐛 Patch version update detected"
+                AUTO_APPROVE=true
+                AUTO_MERGE=true
+                REASON="Patch version update - safe to auto-merge"
+              fi
+            else
+              echo "ℹ️ Non-standard version format"
+              AUTO_APPROVE=true
+              AUTO_MERGE=false
+              REASON="Non-standard version format - requires manual review"
+            fi
+
+            # Special handling for security updates
+            if echo "$PR_BODY" | grep -qi "security"; then
+              echo "🔒 Security update detected"
+              AUTO_APPROVE=true
+              AUTO_MERGE=true
+              REASON="Security update - auto-merging for safety"
+            fi
+
+            # Special handling for test dependencies (more permissive)
+            if echo "$PR_LABELS" | grep -q "tests"; then
+              echo "🧪 Test dependency update"
+              AUTO_APPROVE=true
+              AUTO_MERGE=true
+              REASON="Test dependency - safe to auto-merge"
+            fi
+          fi
+        fi
+
+        echo "auto_approve=${AUTO_APPROVE}" >> $GITHUB_OUTPUT
+        echo "auto_merge=${AUTO_MERGE}" >> $GITHUB_OUTPUT
+        echo "merge_method=${MERGE_METHOD}" >> $GITHUB_OUTPUT
+        echo "reason=${REASON}" >> $GITHUB_OUTPUT
+
+        echo ""
+        echo "📊 Dependabot Analysis Results:"
+        echo "  Auto Approve: ${AUTO_APPROVE}"
+        echo "  Auto Merge: ${AUTO_MERGE}"
+        echo "  Merge Method: ${MERGE_METHOD}"
+        echo "  Reason: ${REASON}"
+
+    - name: Wait for CI checks
+      id: wait-for-ci-checks
+      if: steps.analyze.outputs.auto_approve == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "⏳ Waiting for CI checks to complete..."
+
+        # Wait for checks to complete (max 10 minutes)
+        TIMEOUT=600
+        ELAPSED=0
+        INTERVAL=30
+
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          # Get check runs for this commit
+          CHECKS=$(gh api repos/${{ github.repository }}/commits/${{ github.event.pull_request.head.sha }}/check-runs --jq '.check_runs[] | select(.name != "dependabot-auto-merge") | .status')
+
+          # Count pending checks
+          PENDING_CHECKS=$(echo "$CHECKS" | grep -c "in_progress\|queued" || echo "0")
+          FAILED_CHECKS=$(echo "$CHECKS" | grep -c "failure" || echo "0")
+
+          echo "Pending checks: $PENDING_CHECKS, Failed checks: $FAILED_CHECKS"
+
+          if [ "$PENDING_CHECKS" -eq 0 ]; then
+            if [ "$FAILED_CHECKS" -eq 0 ]; then
+              echo "✅ All checks passed!"
+              echo "checks_passed=true" >> $GITHUB_OUTPUT
+              break
+            else
+              echo "❌ Some checks failed"
+              echo "checks_passed=false" >> $GITHUB_OUTPUT
+              break
+            fi
+          fi
+
+          echo "Waiting ${INTERVAL}s for checks to complete..."
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+          echo "⏰ Timeout waiting for checks"
+          echo "checks_passed=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Approve PR
+      if: steps.analyze.outputs.auto_approve == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "👍 Auto-approving Dependabot PR..."
+
+        gh pr review ${{ github.event.pull_request.number }} \
+          --approve \
+          --body "🤖 **Auto-approved by GitHub App**
+
+        **Reason:** ${{ steps.analyze.outputs.reason }}
+
+        **Analysis:**
+        - ✅ Dependabot PR detected
+        - ✅ Dependency update verified
+        - ✅ Auto-approval criteria met
+
+        This PR has been automatically approved based on the dependency update type and repository policies."
+
+    - name: Add auto-merge label
+      if: steps.analyze.outputs.auto_merge == 'true' && steps.wait-for-ci-checks.outputs.checks_passed == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "🏷️ Adding auto-merge label..."
+        gh pr edit ${{ github.event.pull_request.number }} --add-label "auto-merge"
+
+    - name: Merge PR
+      if: steps.analyze.outputs.auto_merge == 'true' && steps.wait-for-ci-checks.outputs.checks_passed == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "🚀 Auto-merging Dependabot PR..."
+
+        # Add a comment before merging
+        gh pr comment ${{ github.event.pull_request.number }} \
+          --body "🤖 **Auto-merging this PR**
+
+        **Reason:** ${{ steps.analyze.outputs.reason }}
+
+        **Checks:**
+        - ✅ All CI checks passed
+        - ✅ Auto-merge criteria met
+        - ✅ Safe dependency update detected
+
+        Merging now..."
+
+        # Merge the PR
+        gh pr merge ${{ github.event.pull_request.number }} \
+          --${{ steps.analyze.outputs.merge_method }} \
+          --delete-branch
+
+    - name: Comment on manual review needed
+      if: steps.analyze.outputs.auto_approve == 'true' && steps.analyze.outputs.auto_merge == 'false'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "💬 Adding manual review comment..."
+
+        gh pr comment ${{ github.event.pull_request.number }} \
+          --body "🤖 **Auto-approved with manual merge required**
+
+        **Reason:** ${{ steps.analyze.outputs.reason }}
+
+        **Next Steps:**
+        - ✅ This PR has been automatically approved
+        - ⏳ Manual review and merge required
+        - 🔍 Please review the changes before merging
+
+        This dependency update requires manual attention due to its nature or scope."
+
+    - name: Comment on checks failed
+      if: steps.analyze.outputs.auto_approve == 'true' && steps.wait-for-ci-checks.outputs.checks_passed == 'false'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "💬 Adding checks failed comment..."
+
+        gh pr comment ${{ github.event.pull_request.number }} \
+          --body "🤖 **Auto-approval completed, but merge blocked**
+
+        **Status:** CI checks failed or timed out
+
+        **Next Steps:**
+        - ✅ This PR has been automatically approved
+        - ❌ CI checks failed - merge blocked
+        - 🔧 Please review and fix any failing tests
+
+        The PR will need manual attention to resolve the failing checks."
