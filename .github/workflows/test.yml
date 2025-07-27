@@ -3,8 +3,6 @@ name: Test API Endpoints
 on:
   push:
     branches-ignore: [ main ]  # Run on push to any branch except main
-  pull_request:
-    branches: [ main ]  # Run on PRs targeting main
   workflow_dispatch:   # Allow manual triggering
 
 env:
@@ -35,9 +33,35 @@ jobs:
       run: |
         pipx install pytest
 
-    - name: Inject test requirements into pytest environment
+    - name: Inject requirements into pytest environment
       run: |
-        pipx inject pytest requests PyYAML netifaces
+        # Install main requirements if they exist
+        if [ -f requirements.txt ]; then
+          echo "Installing main requirements into pytest environment..."
+          while read -r requirement; do
+            # Skip empty lines and comments
+            if [[ ! -z "$requirement" && ! "$requirement" =~ ^[[:space:]]*# ]]; then
+              echo "Installing: $requirement"
+              pipx inject pytest "$requirement" || echo "Warning: Failed to install $requirement"
+            fi
+          done < requirements.txt
+        fi
+
+        # Install test requirements if they exist
+        if [ -f tests/requirements.txt ]; then
+          echo "Installing test requirements into pytest environment..."
+          while read -r requirement; do
+            # Skip empty lines and comments
+            if [[ ! -z "$requirement" && ! "$requirement" =~ ^[[:space:]]*# ]]; then
+              echo "Installing: $requirement"
+              pipx inject pytest "$requirement" || echo "Warning: Failed to install $requirement"
+            fi
+          done < tests/requirements.txt
+        fi
+
+        # Verify pytest environment
+        echo "Pytest environment packages:"
+        pipx list --include-injected
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3

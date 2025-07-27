@@ -18,6 +18,18 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      python-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
 
   # Enable version updates for test dependencies
   - package-ecosystem: "pip"
@@ -38,6 +50,18 @@ updates:
       - "dependencies"
       - "python"
       - "tests"
+    groups:
+      test-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      test-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
 
   # Enable version updates for Docker dependencies
   - package-ecosystem: "docker"
@@ -77,3 +101,15 @@ updates:
       - "dependencies"
       - "github-actions"
       - "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      github-actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
