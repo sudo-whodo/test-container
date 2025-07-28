@@ -30,12 +30,11 @@ jobs:
       id: analyze
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-        PR_TITLE: ${{ github.event.pull_request.title }}
-        PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
       run: |
-        # Get PR details safely from environment variables
-        echo "PR Title: $PR_TITLE"
-        echo "PR Labels: $PR_LABELS"
+        # Get PR details safely using GitHub CLI
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        echo "Analyzing PR..."
+        echo "Actor: ${{ github.actor }}"
 
         # Initialize approval criteria
         AUTO_APPROVE=false
@@ -74,7 +73,7 @@ jobs:
             fi
 
             # Special handling for test dependencies (more permissive)
-            if [[ "$PR_TITLE" == *"test"* ]] || [[ "$PR_LABELS" == *"tests"* ]]; then
+            if [[ "$PR_TITLE" == *"test"* ]]; then
               echo "🧪 Test dependency update"
               AUTO_APPROVE=true
               AUTO_MERGE=true
@@ -82,7 +81,7 @@ jobs:
             fi
 
             # Special handling for GitHub Actions
-            if [[ "$PR_TITLE" == *"actions"* ]] || [[ "$PR_LABELS" == *"github-actions"* ]]; then
+            if [[ "$PR_TITLE" == *"actions"* ]]; then
               echo "⚙️ GitHub Actions update detected"
               AUTO_APPROVE=true
               AUTO_MERGE=true
