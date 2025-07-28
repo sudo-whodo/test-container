@@ -240,18 +240,25 @@ jobs:
       run: |
         EXIT_CODE=${{ steps.pylint.outputs.pylint_exit_code }}
         ERROR_COUNT=${{ steps.pylint.outputs.error_count }}
+        SCORE=${{ steps.pylint.outputs.pylint_score }}
 
         echo "Pylint exit code: ${EXIT_CODE}"
         echo "Error count: ${ERROR_COUNT}"
+        echo "Pylint score: ${SCORE}/10"
 
-        # Fail the job if there are errors (you can adjust this logic)
-        if [ "${ERROR_COUNT}" -gt "0" ]; then
-          echo "❌ Failing due to Pylint errors"
+        # Convert score to numeric for comparison (handle N/A case)
+        if [ "${SCORE}" = "N/A" ]; then
+          echo "❌ No score available - failing"
           exit 1
-        elif [ "${EXIT_CODE}" -ne "0" ]; then
-          echo "⚠️ Pylint found issues but no errors - job will pass"
+        fi
+
+        # Use bc for floating point comparison (score >= 8.0 means >= 80%)
+        SCORE_CHECK=$(echo "${SCORE} >= 8.0" | bc -l)
+
+        if [ "${SCORE_CHECK}" -eq "1" ]; then
+          echo "✅ Pylint score ${SCORE}/10 (≥80%) - passing"
           exit 0
         else
-          echo "✅ Pylint passed with no issues"
-          exit 0
+          echo "❌ Pylint score ${SCORE}/10 (<80%) - failing"
+          exit 1
         fi

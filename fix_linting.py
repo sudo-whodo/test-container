@@ -4,7 +4,6 @@ Script to help fix remaining Python linting issues
 """
 
 import os
-import re
 import subprocess
 import sys
 
@@ -14,7 +13,7 @@ def run_pylint():
         result = subprocess.run([
             'pylint', '--rcfile=.config/.pylintrc',
             'app/app.py', 'tests/test_http_endpoints.py'
-        ], capture_output=True, text=True)
+        ], capture_output=True, text=True, check=False)
         return result.stdout
     except FileNotFoundError:
         print("Error: pylint not found. Install with: pipx install pylint")
@@ -37,7 +36,8 @@ def analyze_issues(pylint_output):
             issues['import_errors'].append(line)
         elif 'C0301: Line too long' in line:
             issues['line_too_long'].append(line)
-        elif 'W1309: Using an f-string that does not have any interpolated variables' in line:
+        elif ('W1309: Using an f-string that does not have any interpolated variables'
+              in line):
             issues['f_string_issues'].append(line)
         elif 'W0718: Catching too general exception Exception' in line:
             issues['broad_exceptions'].append(line)
