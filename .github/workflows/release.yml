@@ -137,6 +137,12 @@ jobs:
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
+          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --build-arg VERSION=${VERSION} \
+          --build-arg REVISION=${{ github.sha }} \
+          --label org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --label org.opencontainers.image.version=${VERSION} \
+          --label org.opencontainers.image.revision=${{ github.sha }} \
           --push \
           --provenance=false \
           --sbom=false \
@@ -340,134 +346,67 @@ jobs:
         echo "  Minor changes: $HAS_MINOR"
         echo "  Patch changes: $HAS_PATCH"
 
-    - name: Run semantic-release with PR fallback
+    - name: Run semantic-release
+      id: version
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
-        # First try semantic-release normally
-        echo "🚀 Running semantic-release (conventional commits)..."
-        npx semantic-release --dry-run > semantic-release-output.txt 2>&1 || true
-        cat semantic-release-output.txt
+        echo "🚀 Running semantic-release with conventional commits..."
 
-        # Check if semantic-release found a version
-        if grep -q "The next release version is" semantic-release-output.txt; then
-          echo "✅ Semantic-release detected version bump from conventional commits"
-          SEMANTIC_VERSION=$(grep "The next release version is" semantic-release-output.txt | sed 's/.*The next release version is \([0-9.]*\).*/\1/')
-          echo "semantic_version=${SEMANTIC_VERSION}" >> $GITHUB_OUTPUT
-          echo "use_semantic=true" >> $GITHUB_OUTPUT
-        else
-          echo "⚠️ No version detected by semantic-release, using PR analysis fallback"
-          echo "use_semantic=false" >> $GITHUB_OUTPUT
-        fi
+        # Check if there are any commits that would trigger a release
+        if npx semantic-release --dry-run > semantic-release-output.txt 2>&1; then
+          echo "✅ Semantic-release will create a release"
 
-    - name: Calculate fallback version
-      id: version
-      run: |
-        USE_SEMANTIC="${{ env.use_semantic }}"
-        PR_VERSION_BUMP="${{ steps.pr-analysis.outputs.pr_version_bump }}"
-        HAS_CHANGES="${{ steps.pr-analysis.outputs.has_changes }}"
-        FORCE_RELEASE="${{ github.event.inputs.force_release }}"
-        MANUAL_RELEASE_TYPE="${{ github.event.inputs.release_type }}"
-
-        echo "🔧 Version Calculation Inputs:"
-        echo "  Use semantic: $USE_SEMANTIC"
-        echo "  PR version bump: $PR_VERSION_BUMP"
-        echo "  Has changes: $HAS_CHANGES"
-        echo "  Force release: $FORCE_RELEASE"
-        echo "  Manual release type: $MANUAL_RELEASE_TYPE"
-
-        if [ "$USE_SEMANTIC" = "true" ]; then
-          # Use semantic-release version
-          NEXT_VERSION="${{ env.semantic_version }}"
-          echo "next_version=v${NEXT_VERSION}" >> $GITHUB_OUTPUT
-          echo "version_number=${NEXT_VERSION}" >> $GITHUB_OUTPUT
-          echo "has_release=true" >> $GITHUB_OUTPUT
-          echo "version_source=semantic-release" >> $GITHUB_OUTPUT
-          echo "✅ Using semantic-release version: v${NEXT_VERSION}"
-        elif [ "$HAS_CHANGES" = "true" ] && [ "$PR_VERSION_BUMP" != "none" ]; then
-          # Calculate version using PR analysis
-          CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-          echo "Current version: $CURRENT_VERSION"
-
-          # Ensure we have a valid version format
-          if [ -z "$CURRENT_VERSION" ] || [ "$CURRENT_VERSION" = "" ]; then
-            CURRENT_VERSION="0.0.0"
+          # Extract version from dry-run output
+          if grep -q "The next release version is" semantic-release-output.txt; then
+            NEXT_VERSION=$(grep "The next release version is" semantic-release-output.txt | sed 's/.*The next release version is \([0-9.]*\).*/\1/')
+            echo "next_version=v${NEXT_VERSION}" >> $GITHUB_OUTPUT
+            echo "version_number=${NEXT_VERSION}" >> $GITHUB_OUTPUT
+            echo "has_release=true" >> $GITHUB_OUTPUT
+            echo "✅ Next version: v${NEXT_VERSION}"
+          else
+            echo "has_release=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No version bump detected"
           fi
-
-          # Parse current version
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-          # Ensure all version parts are numbers
-          MAJOR=${MAJOR:-0}
-          MINOR=${MINOR:-0}
-          PATCH=${PATCH:-0}
-
-          # Bump version based on PR analysis
-          case "$PR_VERSION_BUMP" in
-            "major")
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            "minor")
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            "patch")
-              PATCH=$((PATCH + 1))
-              ;;
-          esac
-
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "next_version=v${NEW_VERSION}" >> $GITHUB_OUTPUT
-          echo "version_number=${NEW_VERSION}" >> $GITHUB_OUTPUT
-          echo "has_release=true" >> $GITHUB_OUTPUT
-          echo "version_source=pr-labels" >> $GITHUB_OUTPUT
-          echo "✅ Using PR-based version: v${NEW_VERSION} (${PR_VERSION_BUMP} bump)"
-        elif [ "$FORCE_RELEASE" = "true" ]; then
-          # Force release with manual version type
-          CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-          echo "Current version: $CURRENT_VERSION"
-
-          # Ensure we have a valid version format
-          if [ -z "$CURRENT_VERSION" ] || [ "$CURRENT_VERSION" = "" ]; then
-            CURRENT_VERSION="0.0.0"
-          fi
-
-          # Parse current version
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-          # Ensure all version parts are numbers
-          MAJOR=${MAJOR:-0}
-          MINOR=${MINOR:-0}
-          PATCH=${PATCH:-0}
-
-          # Bump version based on manual input
-          case "$MANUAL_RELEASE_TYPE" in
-            "major")
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            "minor")
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            "patch"|*)
-              PATCH=$((PATCH + 1))
-              ;;
-          esac
-
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "next_version=v${NEW_VERSION}" >> $GITHUB_OUTPUT
-          echo "version_number=${NEW_VERSION}" >> $GITHUB_OUTPUT
-          echo "has_release=true" >> $GITHUB_OUTPUT
-          echo "version_source=manual-force" >> $GITHUB_OUTPUT
-          echo "✅ Force release: v${NEW_VERSION} (${MANUAL_RELEASE_TYPE} bump)"
         else
-          echo "has_release=false" >> $GITHUB_OUTPUT
-          echo "version_source=none" >> $GITHUB_OUTPUT
-          echo "ℹ️ No release will be created (no relevant changes, use force_release=true to override)"
+          echo "⚠️ Semantic-release dry-run failed or no release needed"
+          cat semantic-release-output.txt
+
+          # Check for force release
+          if [ "${{ github.event.inputs.force_release }}" = "true" ]; then
+            echo "🔄 Force release requested, calculating manual version..."
+            CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+
+            # Parse and increment version
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            PATCH=${PATCH:-0}
+
+            case "${{ github.event.inputs.release_type }}" in
+              "major")
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              "minor")
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              "patch"|*)
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+
+            NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            echo "next_version=v${NEW_VERSION}" >> $GITHUB_OUTPUT
+            echo "version_number=${NEW_VERSION}" >> $GITHUB_OUTPUT
+            echo "has_release=true" >> $GITHUB_OUTPUT
+            echo "✅ Force release: v${NEW_VERSION}"
+          else
+            echo "has_release=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No release will be created"
+          fi
         fi
 
     - name: Set up Docker Buildx
@@ -505,6 +444,12 @@ jobs:
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
+          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --build-arg VERSION=${VERSION} \
+          --build-arg REVISION=${{ github.sha }} \
+          --label org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --label org.opencontainers.image.version=${VERSION} \
+          --label org.opencontainers.image.revision=${{ github.sha }} \
           --push \
           --provenance=false \
           --sbom=false \
@@ -514,6 +459,12 @@ jobs:
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest \
+          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --build-arg VERSION=${VERSION} \
+          --build-arg REVISION=${{ github.sha }} \
+          --label org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          --label org.opencontainers.image.version=${VERSION} \
+          --label org.opencontainers.image.revision=${{ github.sha }} \
           --push \
           --provenance=false \
           --sbom=false \
@@ -528,26 +479,210 @@ jobs:
         docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
         docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest
 
-    - name: Create production GitHub release
+    - name: Generate release notes
       if: steps.version.outputs.has_release == 'true'
+      id: release-notes
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
         VERSION=${{ steps.version.outputs.next_version }}
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-        gh release create "$VERSION" \
-          --title "Release $VERSION" \
-          --notes "🚀 Production release $VERSION
 
-        **Docker Images:**
-        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\`
-        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest\`
+        # Get the last release tag for comparison
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+        echo "Comparing changes from $LAST_TAG to HEAD"
 
-        **Pull the images:**
+        # Get all commits since last release
+        COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%h|%s|%an|%ad" --date=short --no-merges)
+
+        # Initialize categories
+        FEATURES=""
+        FIXES=""
+        DOCS=""
+        CHORES=""
+        BREAKING=""
+        OTHER=""
+
+        # Categorize commits
+        while IFS='|' read -r hash subject author date; do
+          if [ -n "$subject" ]; then
+            case "$subject" in
+              feat*!:*|*BREAKING*CHANGE*)
+                BREAKING="${BREAKING}- ${subject} (${hash})\n"
+                ;;
+              feat*:*)
+                FEATURES="${FEATURES}- ${subject} (${hash})\n"
+                ;;
+              fix*:*)
+                FIXES="${FIXES}- ${subject} (${hash})\n"
+                ;;
+              docs*:*)
+                DOCS="${DOCS}- ${subject} (${hash})\n"
+                ;;
+              chore*:|ci*:|build*:|test*:*)
+                CHORES="${CHORES}- ${subject} (${hash})\n"
+                ;;
+              *)
+                OTHER="${OTHER}- ${subject} (${hash})\n"
+                ;;
+            esac
+          fi
+        done <<< "$COMMITS"
+
+        # Build release notes
+        RELEASE_NOTES="🚀 **Release ${VERSION}**
+
+        This release includes $(echo "$COMMITS" | wc -l) commits with the following changes:
+
+        "
+
+        if [ -n "$BREAKING" ]; then
+          RELEASE_NOTES="${RELEASE_NOTES}## 🚨 Breaking Changes
+        ${BREAKING}
+        "
+        fi
+
+        if [ -n "$FEATURES" ]; then
+          RELEASE_NOTES="${RELEASE_NOTES}## ✨ New Features
+        ${FEATURES}
+        "
+        fi
+
+        if [ -n "$FIXES" ]; then
+          RELEASE_NOTES="${RELEASE_NOTES}## 🐛 Bug Fixes
+        ${FIXES}
+        "
+        fi
+
+        if [ -n "$DOCS" ]; then
+          RELEASE_NOTES="${RELEASE_NOTES}## 📚 Documentation
+        ${DOCS}
+        "
+        fi
+
+        if [ -n "$CHORES" ]; then
+          RELEASE_NOTES="${RELEASE_NOTES}## 🔧 Maintenance
+        ${CHORES}
+        "
+        fi
+
+        if [ -n "$OTHER" ]; then
+          RELEASE_NOTES="${RELEASE_NOTES}## 📦 Other Changes
+        ${OTHER}
+        "
+        fi
+
+        # Add container information
+        RELEASE_NOTES="${RELEASE_NOTES}## 🐳 Container Images
+
+        **Multi-Architecture Support:** AMD64, ARM64
+
+        **Available Images:**
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\` (versioned)
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest\` (latest stable)
+
+        **Quick Start:**
         \`\`\`bash
+        # Pull and run the container
         docker pull ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
-        docker pull ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest
+        docker run -d --name test-api -p 8080:8080 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+
+        # Test the API
+        curl http://localhost:8080/health
         \`\`\`
 
-        **Changes in this release:**
-        $(git log $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD --pretty=format:'- %s' --no-merges)"
+        **Architecture-Specific:**
+        \`\`\`bash
+        # Force AMD64
+        docker run --platform linux/amd64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+
+        # Force ARM64
+        docker run --platform linux/arm64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+        \`\`\`
+
+        ## 📊 Release Information
+
+        - **Version:** ${{ steps.version.outputs.version_number }}
+        - **Build Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+        - **Commit:** ${{ github.sha }}
+        - **Version Source:** ${{ steps.version.outputs.version_source }}
+        - **Total Commits:** $(echo "$COMMITS" | wc -l)
+
+        ## 🔗 Links
+
+        - [Repository](https://github.com/${{ github.repository }})
+        - [Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }})
+        - [Documentation](https://github.com/${{ github.repository }}/blob/main/README.md)
+        - [Issues](https://github.com/${{ github.repository }}/issues)
+        "
+
+        # Save release notes to file and output
+        echo "$RELEASE_NOTES" > release-notes.md
+        echo "release_notes<<EOF" >> $GITHUB_OUTPUT
+        echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Run semantic-release to create release
+      if: steps.version.outputs.has_release == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "🚀 Creating release with semantic-release..."
+
+        # Run semantic-release to create the actual release with generated notes
+        npx semantic-release
+
+        echo "✅ Release created with semantic-release"
+
+        # Add container information to the release
+        VERSION=${{ steps.version.outputs.next_version }}
+        REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+        # Get the release and update it with container info
+        RELEASE_BODY=$(gh release view "$VERSION" --json body --jq '.body')
+
+        CONTAINER_INFO="
+
+        ## 🐳 Container Images
+
+        **Multi-Architecture Support:** AMD64, ARM64
+
+        **Available Images:**
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\` (versioned)
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest\` (latest stable)
+
+        **Quick Start:**
+        \`\`\`bash
+        # Pull and run the container
+        docker pull ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+        docker run -d --name test-api -p 8080:8080 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+
+        # Test the API
+        curl http://localhost:8080/health
+        \`\`\`
+
+        **Architecture-Specific:**
+        \`\`\`bash
+        # Force AMD64
+        docker run --platform linux/amd64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+
+        # Force ARM64
+        docker run --platform linux/arm64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+        \`\`\`
+
+        ## 📊 Release Information
+
+        - **Build Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+        - **Commit:** ${{ github.sha }}
+        - **Container Architectures:** AMD64, ARM64
+
+        ## 🔗 Links
+
+        - [Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }})
+        - [Documentation](https://github.com/${{ github.repository }}/blob/main/README.md)
+        "
+
+        # Update the release with container information
+        gh release edit "$VERSION" --notes "${RELEASE_BODY}${CONTAINER_INFO}"
+
+        echo "✅ Updated release with container information"
