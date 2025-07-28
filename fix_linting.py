@@ -132,8 +132,10 @@ def main():
         return 1
 
     if "Your code has been rated at" in output:
-        score_line = [line for line in output.split('\n') if "Your code has been rated at" in line][0]
-        print(f"\n📊 Current Score: {score_line}")
+        score_lines = [line for line in output.split('\n')
+                      if "Your code has been rated at" in line]
+        if score_lines:
+            print(f"\n📊 Current Score: {score_lines[0]}")
 
     issues = analyze_issues(output)
     print_analysis(issues)
