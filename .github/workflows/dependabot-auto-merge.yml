@@ -32,12 +32,11 @@ jobs:
       id: analyze
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+        PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
       run: |
-        # Get PR details
-        PR_TITLE="${{ github.event.pull_request.title }}"
-        PR_BODY="${{ github.event.pull_request.body }}"
-        PR_LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
-
+        # Get PR details safely using environment variables
         echo "PR Title: $PR_TITLE"
         echo "PR Labels: $PR_LABELS"
 
