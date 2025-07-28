@@ -41,7 +41,8 @@ def analyze_issues(pylint_output):
             issues['f_string_issues'].append(line)
         elif 'W0718: Catching too general exception Exception' in line:
             issues['broad_exceptions'].append(line)
-        elif any(x in line for x in ['R0913:', 'R0914:', 'R0912:', 'R0915:', 'R0911:']):
+        elif any(x in line for x in ['R0913:', 'R0914:', 'R0912:',
+                                     'R0915:', 'R0911:']):
             issues['complexity_issues'].append(line)
         elif line.strip() and not line.startswith('*') and not line.startswith('-'):
             issues['other'].append(line)
