@@ -1,9 +1,9 @@
 # Core application dependencies
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
 
 # Testing dependencies
-pytest==7.4.3
-requests==2.31.0
-PyYAML==6.0.1
+pytest==8.4.1
+requests==2.32.4
+PyYAML==6.0.2
 netifaces==0.11.0
