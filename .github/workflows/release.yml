@@ -355,12 +355,12 @@ jobs:
         echo "  Minor changes: $HAS_MINOR"
         echo "  Patch changes: $HAS_PATCH"
 
-    - name: Run semantic-release
+    - name: Check for release eligibility
       id: version
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
-        echo "🚀 Running semantic-release with conventional commits..."
+        echo "🔍 Checking if release should be created..."
 
         # Check if there are any commits that would trigger a release
         if npx semantic-release --dry-run > semantic-release-output.txt 2>&1; then
@@ -373,11 +373,6 @@ jobs:
             echo "version_number=${NEXT_VERSION}" >> $GITHUB_OUTPUT
             echo "has_release=true" >> $GITHUB_OUTPUT
             echo "✅ Next version: v${NEXT_VERSION}"
-
-            # Run semantic-release immediately to create the release and tag
-            echo "🚀 Creating release with semantic-release..."
-            npx semantic-release
-            echo "✅ Release created with semantic-release"
           else
             echo "has_release=false" >> $GITHUB_OUTPUT
             echo "ℹ️ No version bump detected"
@@ -417,10 +412,6 @@ jobs:
             echo "version_number=${NEW_VERSION}" >> $GITHUB_OUTPUT
             echo "has_release=true" >> $GITHUB_OUTPUT
             echo "✅ Force release: v${NEW_VERSION}"
-
-            # Create manual tag for force release
-            git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
-            git push origin "v${NEW_VERSION}"
           else
             echo "has_release=false" >> $GITHUB_OUTPUT
             echo "ℹ️ No release will be created"
@@ -632,3 +623,72 @@ jobs:
         echo "release_notes<<EOF" >> $GITHUB_OUTPUT
         echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create release with semantic-release
+      if: steps.version.outputs.has_release == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "🚀 Creating release with semantic-release..."
+
+        # Only run semantic-release if containers were successfully built
+        if [ "${{ steps.version.outputs.has_release }}" = "true" ]; then
+          # Run semantic-release to create the actual release with generated notes
+          npx semantic-release
+          echo "✅ Release created with semantic-release"
+
+          # Update the release with container information
+          VERSION=${{ steps.version.outputs.next_version }}
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
+          # Get the release and update it with container info
+          RELEASE_BODY=$(gh release view "$VERSION" --json body --jq '.body')
+
+          CONTAINER_INFO="
+
+          ## 🐳 Container Images
+
+          **Multi-Architecture Support:** AMD64, ARM64
+
+          **Available Images:**
+          - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\` (versioned)
+          - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest\` (latest stable)
+
+          **Quick Start:**
+          \`\`\`bash
+          # Pull and run the container
+          docker pull ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+          docker run -d --name test-api -p 8080:8080 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+
+          # Test the API
+          curl http://localhost:8080/health
+          \`\`\`
+
+          **Architecture-Specific:**
+          \`\`\`bash
+          # Force AMD64
+          docker run --platform linux/amd64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+
+          # Force ARM64
+          docker run --platform linux/arm64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+          \`\`\`
+
+          ## 📊 Release Information
+
+          - **Build Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          - **Commit:** ${{ github.sha }}
+          - **Container Architectures:** AMD64, ARM64
+
+          ## 🔗 Links
+
+          - [Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }})
+          - [Documentation](https://github.com/${{ github.repository }}/blob/main/README.md)
+          "
+
+          # Update the release with container information
+          gh release edit "$VERSION" --notes "${RELEASE_BODY}${CONTAINER_INFO}"
+          echo "✅ Updated release with container information"
+        else
+          echo "❌ Skipping release creation - containers were not built"
+          exit 1
+        fi
