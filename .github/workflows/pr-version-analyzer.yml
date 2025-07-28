@@ -22,9 +22,11 @@ jobs:
 
     - name: Analyze PR labels for version bump
       id: version-analysis
+      env:
+        PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
       run: |
-        # Get PR labels
-        PR_LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+        # Get PR labels from environment
         echo "PR Labels: $PR_LABELS"
 
         # Initialize version bump type
@@ -46,7 +48,6 @@ jobs:
           RELEASE_TYPE="none"
         else
           # No explicit version labels, check for conventional commit patterns in PR title
-          PR_TITLE='${{ github.event.pull_request.title }}'
           echo "PR Title: $PR_TITLE"
 
           if echo "$PR_TITLE" | grep -qE "^feat(\(.+\))?!:|BREAKING CHANGE"; then
