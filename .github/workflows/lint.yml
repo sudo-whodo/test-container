@@ -105,11 +105,11 @@ jobs:
           echo "Pylint Score: N/A"
         fi
 
-        # Count issues by type
-        ERROR_COUNT=$(grep -c "E[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
-        WARNING_COUNT=$(grep -c "W[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
-        CONVENTION_COUNT=$(grep -c "C[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
-        REFACTOR_COUNT=$(grep -c "R[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" || echo "0")
+        # Count issues by type (handle grep exit codes properly)
+        ERROR_COUNT=$(grep -c "E[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
+        WARNING_COUNT=$(grep -c "W[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
+        CONVENTION_COUNT=$(grep -c "C[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
+        REFACTOR_COUNT=$(grep -c "R[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
 
         echo "error_count=${ERROR_COUNT}" >> $GITHUB_OUTPUT
         echo "warning_count=${WARNING_COUNT}" >> $GITHUB_OUTPUT
