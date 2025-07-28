@@ -228,3 +228,15 @@ This test API integrates with:
 - **Load balancer tests** (`../test_loadbalancer.py`)
 - **Container monitoring** (systemd, docker, podman)
 - **Network port testing** (firewall, connectivity)
+
+## 📋 Release Notes
+
+For detailed information about recent improvements and changes, see [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+## 📚 Documentation
+
+For additional documentation, please refer to the `docs/` directory:
+
+- **[Contributing Guidelines](docs/CONTRIBUTING.md)** - How to contribute to the project
+- **[GitHub App Setup](docs/GITHUB_APP_SETUP.md)** - Setting up GitHub App for automation
+- **[Versioning Guide](docs/VERSIONING.md)** - Understanding our versioning strategy
