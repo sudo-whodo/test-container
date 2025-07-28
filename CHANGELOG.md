@@ -1,3 +1,10 @@
+## [0.3.6](https://github.com/sudo-whodo/test-container/compare/v0.3.5...v0.3.6) (2025-07-28)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** build versioned and latest Docker tags simultaneously ([6536c0e](https://github.com/sudo-whodo/test-container/commit/6536c0e6765926497338713f74492f154126e8f8))
+
 ## [0.3.5](https://github.com/sudo-whodo/test-container/compare/v0.3.4...v0.3.5) (2025-07-28)
 
 
