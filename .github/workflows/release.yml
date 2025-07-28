@@ -87,10 +87,9 @@ jobs:
         # Increment patch for RC
         PATCH=$((PATCH + 1))
 
-        # Create RC version with branch name and timestamp
-        TIMESTAMP=$(date +%Y%m%d%H%M%S)
-        BRANCH_SAFE=$(echo "${{ steps.branch.outputs.branch_name }}" | sed 's/[^a-zA-Z0-9]/-/g')
-        RC_VERSION="${MAJOR}.${MINOR}.${PATCH}-rc.${BRANCH_SAFE}.${TIMESTAMP}"
+        # Create RC version with git short SHA
+        SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+        RC_VERSION="${MAJOR}.${MINOR}.${PATCH}-rc.${SHORT_SHA}"
 
         echo "next_version=v${RC_VERSION}" >> $GITHUB_OUTPUT
         echo "version_number=${RC_VERSION}" >> $GITHUB_OUTPUT
