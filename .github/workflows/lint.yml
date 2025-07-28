@@ -1,13 +1,17 @@
 name: Python Linting
 
 on:
+  push:
+    branches: [ main ]
+    paths: ['**.py']  # Only run when Python files change
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [ main ]  # Run on PRs targeting main
+    branches: [ main ]
+    paths: ['**.py']  # Only run when Python files change
   workflow_dispatch:   # Allow manual triggering
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.13'
 
 jobs:
   lint:
@@ -23,68 +27,114 @@ jobs:
 
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history for changed file detection
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/tests/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
+    - name: Install pipx and setup tools
       run: |
         python -m pip install --upgrade pip
-        pip install pylint
+        python -m pip install pipx
+        python -m pipx ensurepath
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-        # Install project dependencies if they exist
+    - name: Install Pylint with pipx and inject dependencies
+      run: |
+        # Install pylint via pipx
+        pipx install pylint
+        echo "✅ Pylint installed via pipx"
+        pylint --version
+
+        # Inject project dependencies into pylint's environment for import resolution
         if [ -f requirements.txt ]; then
-          echo "Installing main requirements..."
-          pip install -r requirements.txt
+          echo "📦 Injecting main requirements into pylint environment..."
+          pipx inject pylint -r requirements.txt
         fi
 
         if [ -f tests/requirements.txt ]; then
-          echo "Installing test requirements..."
-          pip install -r tests/requirements.txt
+          echo "📦 Injecting test requirements into pylint environment..."
+          pipx inject pylint -r tests/requirements.txt
         fi
 
-    - name: Find Python files
+        echo "✅ Dependencies injected into pylint environment"
+        echo "📋 Pylint environment packages:"
+        pipx runpip pylint list
+
+    - name: Determine files to lint
       id: find-files
       run: |
-        # Find all Python files, excluding common directories to ignore
-        PYTHON_FILES=$(find . -name "*.py" \
-          -not -path "./.git/*" \
-          -not -path "./.venv/*" \
-          -not -path "./venv/*" \
-          -not -path "./__pycache__/*" \
-          -not -path "./.pytest_cache/*" \
-          -not -path "./build/*" \
-          -not -path "./dist/*" \
-          -not -path "./*.egg-info/*" \
-          | tr '\n' ' ')
+        echo "🔍 Determining which Python files to lint..."
 
-        echo "python_files=${PYTHON_FILES}" >> $GITHUB_OUTPUT
-        echo "Found Python files: ${PYTHON_FILES}"
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # Manual run: Check all Python files
+          echo "📋 Manual run - checking all Python files"
+          PYTHON_FILES=$(git ls-files '*.py' | tr '\n' ' ')
+          LINT_MODE="all"
 
-        # Count files for summary
-        FILE_COUNT=$(echo "${PYTHON_FILES}" | wc -w)
-        echo "file_count=${FILE_COUNT}" >> $GITHUB_OUTPUT
-        echo "Total Python files to lint: ${FILE_COUNT}"
+        elif [ "${{ github.event_name }}" = "push" ]; then
+          # Push to main: Check only changed files in this push
+          echo "🔄 Push event - checking changed files only"
+
+          # Get changed files in this push (compare with previous commit)
+          if [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }}..${{ github.sha }} -- '*.py' | tr '\n' ' ')
+          else
+            # First commit, check all files
+            CHANGED_FILES=$(git ls-files '*.py' | tr '\n' ' ')
+          fi
+
+          PYTHON_FILES="${CHANGED_FILES}"
+          LINT_MODE="changed"
+
+        elif [ "${{ github.event_name }}" = "pull_request" ]; then
+          # Pull request: Check all changed .py files in the PR
+          echo "🔀 Pull request - checking all changed Python files in PR"
+
+          # Get the base branch and compare
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          CHANGED_FILES=$(git diff --name-only ${BASE_SHA}...${HEAD_SHA} -- '*.py' | tr '\n' ' ')
+          PYTHON_FILES="${CHANGED_FILES}"
+          LINT_MODE="pr"
+        fi
+
+        # Remove any empty entries and trim whitespace
+        PYTHON_FILES=$(echo "${PYTHON_FILES}" | xargs -n1 | grep -v '^$' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+
+        if [ -z "${PYTHON_FILES}" ]; then
+          echo "ℹ️ No Python files to lint"
+          echo "python_files=" >> $GITHUB_OUTPUT
+          echo "file_count=0" >> $GITHUB_OUTPUT
+          echo "lint_mode=${LINT_MODE}" >> $GITHUB_OUTPUT
+          echo "has_files=false" >> $GITHUB_OUTPUT
+        else
+          echo "python_files=${PYTHON_FILES}" >> $GITHUB_OUTPUT
+          FILE_COUNT=$(echo "${PYTHON_FILES}" | wc -w)
+          echo "file_count=${FILE_COUNT}" >> $GITHUB_OUTPUT
+          echo "lint_mode=${LINT_MODE}" >> $GITHUB_OUTPUT
+          echo "has_files=true" >> $GITHUB_OUTPUT
+
+          echo "📁 Files to lint (${FILE_COUNT}):"
+          echo "${PYTHON_FILES}" | tr ' ' '\n' | sed 's/^/  - /'
+        fi
 
     - name: Run Pylint
       id: pylint
+      if: steps.find-files.outputs.has_files == 'true'
       run: |
         echo "🔍 Running Pylint with configuration from .config/.pylintrc"
         echo "============================================================"
+        echo "Mode: ${{ steps.find-files.outputs.lint_mode }}"
+        echo "Files: ${{ steps.find-files.outputs.file_count }}"
+        echo ""
 
         # Run pylint with the config file and capture output
         PYLINT_OUTPUT_FILE="pylint-output.txt"
-        PYLINT_SCORE_FILE="pylint-score.txt"
 
         # Run pylint and capture both stdout and return code
         set +e  # Don't exit on non-zero return code
@@ -99,18 +149,18 @@ jobs:
         if grep -q "Your code has been rated at" "${PYLINT_OUTPUT_FILE}"; then
           SCORE=$(grep "Your code has been rated at" "${PYLINT_OUTPUT_FILE}" | sed 's/.*rated at \([0-9.]*\).*/\1/')
           echo "pylint_score=${SCORE}" >> $GITHUB_OUTPUT
-          echo "Pylint Score: ${SCORE}/10"
+          echo "✅ Pylint Score: ${SCORE}/10"
         else
           echo "pylint_score=N/A" >> $GITHUB_OUTPUT
-          echo "Pylint Score: N/A"
+          echo "⚠️ Pylint Score: N/A"
         fi
 
         # Count issues by type (handle grep exit codes properly)
         set +e  # Don't exit on grep failures
-        ERROR_COUNT=$(grep "E[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" | wc -l)
-        WARNING_COUNT=$(grep "W[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" | wc -l)
-        CONVENTION_COUNT=$(grep "C[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" | wc -l)
-        REFACTOR_COUNT=$(grep "R[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" | wc -l)
+        ERROR_COUNT=$(grep -c "E[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
+        WARNING_COUNT=$(grep -c "W[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
+        CONVENTION_COUNT=$(grep -c "C[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
+        REFACTOR_COUNT=$(grep -c "R[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
         set -e
 
         # Ensure counts are valid numbers
@@ -124,11 +174,12 @@ jobs:
         echo "convention_count=${CONVENTION_COUNT}" >> $GITHUB_OUTPUT
         echo "refactor_count=${REFACTOR_COUNT}" >> $GITHUB_OUTPUT
 
+        echo ""
         echo "📊 Issue Summary:"
-        echo "  Errors: ${ERROR_COUNT}"
-        echo "  Warnings: ${WARNING_COUNT}"
-        echo "  Conventions: ${CONVENTION_COUNT}"
-        echo "  Refactor suggestions: ${REFACTOR_COUNT}"
+        echo "  🔴 Errors: ${ERROR_COUNT}"
+        echo "  🟡 Warnings: ${WARNING_COUNT}"
+        echo "  🔵 Conventions: ${CONVENTION_COUNT}"
+        echo "  🟣 Refactor suggestions: ${REFACTOR_COUNT}"
 
         # Save exit code for later use
         echo "pylint_exit_code=${PYLINT_EXIT_CODE}" >> $GITHUB_OUTPUT
@@ -136,26 +187,37 @@ jobs:
         # Create a summary for the job
         echo "## 🔍 Pylint Results" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Mode:** ${{ steps.find-files.outputs.lint_mode }}" >> $GITHUB_STEP_SUMMARY
         echo "**Files analyzed:** ${{ steps.find-files.outputs.file_count }}" >> $GITHUB_STEP_SUMMARY
         echo "**Score:** ${SCORE:-N/A}/10" >> $GITHUB_STEP_SUMMARY
+        echo "**Python version:** ${{ env.PYTHON_VERSION }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "| Issue Type | Count |" >> $GITHUB_STEP_SUMMARY
         echo "|------------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Errors | ${ERROR_COUNT} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Warnings | ${WARNING_COUNT} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Conventions | ${CONVENTION_COUNT} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Refactor | ${REFACTOR_COUNT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🔴 Errors | ${ERROR_COUNT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🟡 Warnings | ${WARNING_COUNT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🔵 Conventions | ${CONVENTION_COUNT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🟣 Refactor | ${REFACTOR_COUNT} |" >> $GITHUB_STEP_SUMMARY
+
+    - name: Skip Pylint (no files)
+      if: steps.find-files.outputs.has_files == 'false'
+      run: |
+        echo "ℹ️ No Python files to lint - skipping Pylint analysis"
+        echo "## 🔍 Pylint Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** Skipped (no Python files to analyze)" >> $GITHUB_STEP_SUMMARY
+        echo "**Mode:** ${{ steps.find-files.outputs.lint_mode }}" >> $GITHUB_STEP_SUMMARY
 
     - name: Upload Pylint report
       uses: actions/upload-artifact@v4
-      if: always()
+      if: always() && steps.find-files.outputs.has_files == 'true'
       with:
-        name: pylint-report
+        name: pylint-report-${{ github.run_number }}
         path: pylint-output.txt
         retention-days: 30
 
     - name: Comment on PR
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' && steps.find-files.outputs.has_files == 'true'
       uses: actions/github-script@v7
       with:
         github-token: ${{ steps.app-token.outputs.token }}
@@ -177,6 +239,7 @@ jobs:
           const refactorCount = '${{ steps.pylint.outputs.refactor_count }}';
           const fileCount = '${{ steps.find-files.outputs.file_count }}';
           const exitCode = '${{ steps.pylint.outputs.pylint_exit_code }}';
+          const lintMode = '${{ steps.find-files.outputs.lint_mode }}';
 
           // Determine status emoji
           let statusEmoji = '✅';
@@ -190,8 +253,10 @@ jobs:
           const body = `## ${statusEmoji} Pylint Analysis Results
 
           **Status:** ${statusText}
+          **Mode:** ${lintMode} (PR changed files)
           **Files Analyzed:** ${fileCount}
           **Score:** ${score}/10
+          **Python Version:** ${{ env.PYTHON_VERSION }}
 
           ### Issue Summary
           | Type | Count |
@@ -211,7 +276,7 @@ jobs:
           </details>
 
           ---
-          *Pylint configuration: \`.config/.pylintrc\`*
+          *Pylint installed via pipx • Configuration: \`.config/.pylintrc\`*
           `;
 
           // Find existing comment
@@ -244,7 +309,55 @@ jobs:
             });
           }
 
+    - name: Comment on PR (no files)
+      if: github.event_name == 'pull_request' && steps.find-files.outputs.has_files == 'false'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ steps.app-token.outputs.token }}
+        script: |
+          const lintMode = '${{ steps.find-files.outputs.lint_mode }}';
+
+          const body = `## ✅ Pylint Analysis Results
+
+          **Status:** Skipped
+          **Mode:** ${lintMode} (PR changed files)
+          **Files Analyzed:** 0
+          **Reason:** No Python files were changed in this PR
+
+          ---
+          *Pylint installed via pipx • Configuration: \`.config/.pylintrc\`*
+          `;
+
+          // Find existing comment and update or create new one
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const existingComment = comments.data.find(comment =>
+            comment.user.login === 'github-actions[bot]' &&
+            comment.body.includes('Pylint Analysis Results')
+          );
+
+          if (existingComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existingComment.id,
+              body: body
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+          }
+
     - name: Set exit code based on Pylint results
+      if: steps.find-files.outputs.has_files == 'true'
       run: |
         EXIT_CODE=${{ steps.pylint.outputs.pylint_exit_code }}
         ERROR_COUNT=${{ steps.pylint.outputs.error_count }}
@@ -261,7 +374,17 @@ jobs:
         fi
 
         # Use bc for floating point comparison (score >= 8.0 means >= 80%)
-        SCORE_CHECK=$(echo "${SCORE} >= 8.0" | bc -l)
+        if command -v bc >/dev/null 2>&1; then
+          SCORE_CHECK=$(echo "${SCORE} >= 8.0" | bc -l)
+        else
+          # Fallback for systems without bc
+          SCORE_INT=$(echo "${SCORE}" | cut -d. -f1)
+          if [ "${SCORE_INT}" -ge 8 ]; then
+            SCORE_CHECK=1
+          else
+            SCORE_CHECK=0
+          fi
+        fi
 
         if [ "${SCORE_CHECK}" -eq "1" ]; then
           echo "✅ Pylint score ${SCORE}/10 (≥80%) - passing"
@@ -270,3 +393,9 @@ jobs:
           echo "❌ Pylint score ${SCORE}/10 (<80%) - failing"
           exit 1
         fi
+
+    - name: Success (no files to lint)
+      if: steps.find-files.outputs.has_files == 'false'
+      run: |
+        echo "✅ No Python files to lint - workflow completed successfully"
+        exit 0
