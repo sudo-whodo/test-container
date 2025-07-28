@@ -4,6 +4,7 @@ Simple HTTP status code checks for APIs running on private IP addresses.
 Auto-detects server's private IP if no IPs specified in configuration.
 """
 
+import ipaddress
 import os
 import socket
 
@@ -81,7 +82,6 @@ def get_private_ip_addresses():
 def is_private_ip(ip):
     """Check if an IP address is in private ranges"""
     try:
-        import ipaddress
         ip_obj = ipaddress.ip_address(ip)
         return ip_obj.is_private
     except (ValueError, AttributeError):
@@ -164,7 +164,10 @@ class TestHTTPEndpoints:
         """Load HTTP endpoint configuration"""
         return load_http_endpoint_config()
 
-    def _test_http_endpoint(self, ip_address, port, path, description, expected_status, required, http_config):
+    def _test_http_endpoint(
+        self, ip_address, port, path, description,
+        expected_status, required, http_config
+    ):
         """Test a specific HTTP endpoint"""
         connection_config = http_config.get('connection_config', {})
 
@@ -200,7 +203,10 @@ class TestHTTPEndpoints:
 
             # Check status code
             if response.status_code != expected_status:
-                error_msg = f"HTTP {response.status_code} (expected {expected_status}) for {path} on {ip_address}:{port}"
+                error_msg = (
+                    f"HTTP {response.status_code} (expected {expected_status}) "
+                    f"for {path} on {ip_address}:{port}"
+                )
                 print(f"❌ {error_msg}")
                 if required:
                     assert False, error_msg
@@ -256,7 +262,7 @@ class TestHTTPEndpoints:
         expected_status = test_combo['expected_status']
         required = test_combo['required']
 
-        print(f"\n🌐 Testing HTTP Endpoint")
+        print("\n🌐 Testing HTTP Endpoint")
         print(f"   IP: {ip_address}")
         print(f"   Port: {port}")
         print(f"   Path: {path}")
@@ -279,7 +285,7 @@ class TestHTTPEndpoints:
         default_port = http_config.get('default_port', 8080)
         connection_config = http_config.get('connection_config', {})
 
-        print(f"\n📋 HTTP Endpoint Test Configuration Summary")
+        print("\n📋 HTTP Endpoint Test Configuration Summary")
 
         if configured_ips:
             print(f"Configured IP addresses: {len(configured_ips)}")
@@ -297,13 +303,13 @@ class TestHTTPEndpoints:
             required_str = "required" if endpoint.get('required', True) else "optional"
             print(f"  - {endpoint['path']} ({required_str}): {endpoint['description']}")
 
-        print(f"\nConnection Configuration:")
+        print("\nConnection Configuration:")
         print(f"  - Timeout: {connection_config.get('timeout', 5)}s")
         print(f"  - Allow Redirects: {connection_config.get('allow_redirects', True)}")
 
         custom_headers = connection_config.get('headers', {})
         if custom_headers:
-            print(f"\nCustom Headers:")
+            print("\nCustom Headers:")
             for header, value in custom_headers.items():
                 print(f"  - {header}: {value}")
 
@@ -311,7 +317,7 @@ class TestHTTPEndpoints:
         print(f"\nTotal test combinations: {total_combinations}")
 
         # Show example URLs that will be tested
-        print(f"\nExample URLs that will be tested:")
+        print("\nExample URLs that will be tested:")
         for ip in actual_ips[:2]:  # Show first 2 IPs as examples
             for endpoint in endpoints[:3]:  # Show first 3 endpoints as examples
                 example_url = f"http://{ip}:{default_port}{endpoint['path']}"
