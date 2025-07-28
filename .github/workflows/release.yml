@@ -34,6 +34,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
 
     steps:
     - name: Generate GitHub App Token
@@ -120,16 +123,16 @@ jobs:
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
         # Build and push versioned RC image
-        docker build -t ghcr.io/${REPO_LOWER}:${VERSION} .
-        docker push ghcr.io/${REPO_LOWER}:${VERSION}
+        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} .
+        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
 
         # Build and push latest-rc image
-        docker build -t ghcr.io/${REPO_LOWER}:latest-rc .
-        docker push ghcr.io/${REPO_LOWER}:latest-rc
+        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc .
+        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc
 
         echo "Built and pushed RC Docker images:"
-        echo "  - ghcr.io/${REPO_LOWER}:${VERSION}"
-        echo "  - ghcr.io/${REPO_LOWER}:latest-rc"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc"
 
     - name: Create RC GitHub release
       env:
@@ -144,8 +147,8 @@ jobs:
         **This is a pre-release for testing purposes.**
 
         **Docker Images:**
-        - \`ghcr.io/${REPO_LOWER}:${{ steps.version.outputs.version_number }}\`
-        - \`ghcr.io/${REPO_LOWER}:latest-rc\`
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\`
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc\`
 
         **Branch:** ${{ steps.branch.outputs.branch_name }}
         **Commit:** ${{ github.sha }}
@@ -160,6 +163,9 @@ jobs:
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, 'skip ci')) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: read
+      packages: write
 
     steps:
     - name: Generate GitHub App Token
@@ -465,16 +471,16 @@ jobs:
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
         # Build and push versioned production image
-        docker build -t ghcr.io/${REPO_LOWER}:${VERSION} .
-        docker push ghcr.io/${REPO_LOWER}:${VERSION}
+        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} .
+        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
 
         # Build and push latest image
-        docker build -t ghcr.io/${REPO_LOWER}:latest .
-        docker push ghcr.io/${REPO_LOWER}:latest
+        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest .
+        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest
 
         echo "Built and pushed production Docker images:"
-        echo "  - ghcr.io/${REPO_LOWER}:${VERSION}"
-        echo "  - ghcr.io/${REPO_LOWER}:latest"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest"
 
     - name: Create production GitHub release
       if: steps.version.outputs.has_release == 'true'
@@ -488,13 +494,13 @@ jobs:
           --notes "🚀 Production release $VERSION
 
         **Docker Images:**
-        - \`ghcr.io/${REPO_LOWER}:${{ steps.version.outputs.version_number }}\`
-        - \`ghcr.io/${REPO_LOWER}:latest\`
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\`
+        - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest\`
 
         **Pull the images:**
         \`\`\`bash
-        docker pull ghcr.io/${REPO_LOWER}:${{ steps.version.outputs.version_number }}
-        docker pull ghcr.io/${REPO_LOWER}:latest
+        docker pull ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+        docker pull ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest
         \`\`\`
 
         **Changes in this release:**
