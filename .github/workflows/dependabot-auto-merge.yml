@@ -2,12 +2,18 @@ name: Dependabot Auto-Merge
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
 
 jobs:
   dependabot-auto-merge:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
 
     steps:
     - name: Generate GitHub App Token
