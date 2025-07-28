@@ -418,6 +418,15 @@ jobs:
           fi
         fi
 
+    - name: Create release with semantic-release
+      if: steps.version.outputs.has_release == 'true'
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        echo "🚀 Creating release with semantic-release..."
+        npx semantic-release
+        echo "✅ Release created with semantic-release"
+
     - name: Set up Docker Buildx
       if: steps.version.outputs.has_release == 'true'
       uses: docker/setup-buildx-action@v3
@@ -430,152 +439,112 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-
     - name: Build and push multi-arch Docker images for production
       if: steps.version.outputs.has_release == 'true'
       run: |
+        set -e  # Exit on any error
+
         VERSION=${{ steps.version.outputs.version_number }}
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        RELEASE_VERSION=${{ steps.version.outputs.next_version }}
+
+        # Get the actual release commit SHA (after semantic-release)
+        RELEASE_SHA=$(git rev-parse HEAD)
+        echo "Building containers from release commit: $RELEASE_SHA"
+
+        # Function to cleanup on failure
+        cleanup_on_failure() {
+          echo "❌ Container build failed! Rolling back release..."
+
+          # Delete the GitHub release
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "🗑️ Deleting GitHub release $RELEASE_VERSION"
+            gh release delete "$RELEASE_VERSION" --yes || echo "Failed to delete release"
+          fi
+
+          # Delete the Git tag
+          if git tag -l | grep -q "^$RELEASE_VERSION$"; then
+            echo "🗑️ Deleting Git tag $RELEASE_VERSION"
+            git tag -d "$RELEASE_VERSION" || echo "Failed to delete local tag"
+            git push origin --delete "$RELEASE_VERSION" || echo "Failed to delete remote tag"
+          fi
+
+          echo "💥 Release rollback completed. Container build failure prevented incomplete release."
+          exit 1
+        }
+
+        # Set trap to cleanup on failure
+        trap cleanup_on_failure ERR
 
         # Remove any existing builder and create a clean one
         docker buildx rm multiarch-builder 2>/dev/null || true
         docker buildx create --use --name multiarch-builder --driver docker-container
         docker buildx inspect --bootstrap
 
+        echo "🐳 Building versioned production image..."
         # Build and push versioned production image with clean manifest
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
           --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
           --build-arg VERSION=${VERSION} \
-          --build-arg REVISION=${{ github.sha }} \
+          --build-arg REVISION=${RELEASE_SHA} \
           --label org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
           --label org.opencontainers.image.version=${VERSION} \
-          --label org.opencontainers.image.revision=${{ github.sha }} \
+          --label org.opencontainers.image.revision=${RELEASE_SHA} \
           --push \
           --provenance=false \
           --sbom=false \
           .
 
+        echo "🐳 Building latest production image..."
         # Build and push latest image with clean manifest
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest \
           --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
           --build-arg VERSION=${VERSION} \
-          --build-arg REVISION=${{ github.sha }} \
+          --build-arg REVISION=${RELEASE_SHA} \
           --label org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
           --label org.opencontainers.image.version=${VERSION} \
-          --label org.opencontainers.image.revision=${{ github.sha }} \
+          --label org.opencontainers.image.revision=${RELEASE_SHA} \
           --push \
           --provenance=false \
           --sbom=false \
           .
 
-        echo "Built and pushed clean multi-arch production Docker images:"
+        echo "✅ Built and pushed clean multi-arch production Docker images:"
         echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} (amd64, arm64)"
         echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest (amd64, arm64)"
+        echo "  - Both images built from commit: ${RELEASE_SHA}"
 
         # Verify manifests
-        echo "Verifying manifests:"
+        echo "🔍 Verifying manifests:"
         docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
         docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest
 
-    - name: Generate release notes
+        echo "✅ Container build and verification completed successfully!"
+
+        # Clear the trap since we succeeded
+        trap - ERR
+      env:
+        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+    - name: Update release with container information
       if: steps.version.outputs.has_release == 'true'
-      id: release-notes
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
         VERSION=${{ steps.version.outputs.next_version }}
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        RELEASE_SHA=$(git rev-parse HEAD)
 
-        # Get the last release tag for comparison
-        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
-        echo "Comparing changes from $LAST_TAG to HEAD"
+        # Get the release and update it with container info
+        RELEASE_BODY=$(gh release view "$VERSION" --json body --jq '.body')
 
-        # Get all commits since last release
-        COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%h|%s|%an|%ad" --date=short --no-merges)
+        CONTAINER_INFO="
 
-        # Initialize categories
-        FEATURES=""
-        FIXES=""
-        DOCS=""
-        CHORES=""
-        BREAKING=""
-        OTHER=""
-
-        # Categorize commits
-        while IFS='|' read -r hash subject author date; do
-          if [ -n "$subject" ]; then
-            case "$subject" in
-              feat*!:*|*BREAKING*CHANGE*)
-                BREAKING="${BREAKING}- ${subject} (${hash})\n"
-                ;;
-              feat*:*)
-                FEATURES="${FEATURES}- ${subject} (${hash})\n"
-                ;;
-              fix*:*)
-                FIXES="${FIXES}- ${subject} (${hash})\n"
-                ;;
-              docs*:*)
-                DOCS="${DOCS}- ${subject} (${hash})\n"
-                ;;
-              chore*:|ci*:|build*:|test*:*)
-                CHORES="${CHORES}- ${subject} (${hash})\n"
-                ;;
-              *)
-                OTHER="${OTHER}- ${subject} (${hash})\n"
-                ;;
-            esac
-          fi
-        done <<< "$COMMITS"
-
-        # Build release notes
-        RELEASE_NOTES="🚀 **Release ${VERSION}**
-
-        This release includes $(echo "$COMMITS" | wc -l) commits with the following changes:
-
-        "
-
-        if [ -n "$BREAKING" ]; then
-          RELEASE_NOTES="${RELEASE_NOTES}## 🚨 Breaking Changes
-        ${BREAKING}
-        "
-        fi
-
-        if [ -n "$FEATURES" ]; then
-          RELEASE_NOTES="${RELEASE_NOTES}## ✨ New Features
-        ${FEATURES}
-        "
-        fi
-
-        if [ -n "$FIXES" ]; then
-          RELEASE_NOTES="${RELEASE_NOTES}## 🐛 Bug Fixes
-        ${FIXES}
-        "
-        fi
-
-        if [ -n "$DOCS" ]; then
-          RELEASE_NOTES="${RELEASE_NOTES}## 📚 Documentation
-        ${DOCS}
-        "
-        fi
-
-        if [ -n "$CHORES" ]; then
-          RELEASE_NOTES="${RELEASE_NOTES}## 🔧 Maintenance
-        ${CHORES}
-        "
-        fi
-
-        if [ -n "$OTHER" ]; then
-          RELEASE_NOTES="${RELEASE_NOTES}## 📦 Other Changes
-        ${OTHER}
-        "
-        fi
-
-        # Add container information
-        RELEASE_NOTES="${RELEASE_NOTES}## 🐳 Container Images
+        ## 🐳 Container Images
 
         **Multi-Architecture Support:** AMD64, ARM64
 
@@ -604,91 +573,18 @@ jobs:
 
         ## 📊 Release Information
 
-        - **Version:** ${{ steps.version.outputs.version_number }}
         - **Build Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
-        - **Commit:** ${{ github.sha }}
-        - **Version Source:** ${{ steps.version.outputs.version_source }}
-        - **Total Commits:** $(echo "$COMMITS" | wc -l)
+        - **Commit:** ${RELEASE_SHA}
+        - **Container Architectures:** AMD64, ARM64
+        - **Container Commit:** ${RELEASE_SHA} (same as release tag)
 
         ## 🔗 Links
 
-        - [Repository](https://github.com/${{ github.repository }})
         - [Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }})
         - [Documentation](https://github.com/${{ github.repository }}/blob/main/README.md)
-        - [Issues](https://github.com/${{ github.repository }}/issues)
         "
 
-        # Save release notes to file and output
-        echo "$RELEASE_NOTES" > release-notes.md
-        echo "release_notes<<EOF" >> $GITHUB_OUTPUT
-        echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
-    - name: Create release with semantic-release
-      if: steps.version.outputs.has_release == 'true'
-      env:
-        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-      run: |
-        echo "🚀 Creating release with semantic-release..."
-
-        # Only run semantic-release if containers were successfully built
-        if [ "${{ steps.version.outputs.has_release }}" = "true" ]; then
-          # Run semantic-release to create the actual release with generated notes
-          npx semantic-release
-          echo "✅ Release created with semantic-release"
-
-          # Update the release with container information
-          VERSION=${{ steps.version.outputs.next_version }}
-          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-
-          # Get the release and update it with container info
-          RELEASE_BODY=$(gh release view "$VERSION" --json body --jq '.body')
-
-          CONTAINER_INFO="
-
-          ## 🐳 Container Images
-
-          **Multi-Architecture Support:** AMD64, ARM64
-
-          **Available Images:**
-          - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\` (versioned)
-          - \`ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest\` (latest stable)
-
-          **Quick Start:**
-          \`\`\`bash
-          # Pull and run the container
-          docker pull ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
-          docker run -d --name test-api -p 8080:8080 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
-
-          # Test the API
-          curl http://localhost:8080/health
-          \`\`\`
-
-          **Architecture-Specific:**
-          \`\`\`bash
-          # Force AMD64
-          docker run --platform linux/amd64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
-
-          # Force ARM64
-          docker run --platform linux/arm64 ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
-          \`\`\`
-
-          ## 📊 Release Information
-
-          - **Build Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
-          - **Commit:** ${{ github.sha }}
-          - **Container Architectures:** AMD64, ARM64
-
-          ## 🔗 Links
-
-          - [Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ env.IMAGE_NAME }})
-          - [Documentation](https://github.com/${{ github.repository }}/blob/main/README.md)
-          "
-
-          # Update the release with container information
-          gh release edit "$VERSION" --notes "${RELEASE_BODY}${CONTAINER_INFO}"
-          echo "✅ Updated release with container information"
-        else
-          echo "❌ Skipping release creation - containers were not built"
-          exit 1
-        fi
+        # Update the release with container information
+        gh release edit "$VERSION" --notes "${RELEASE_BODY}${CONTAINER_INFO}"
+        echo "✅ Updated release with container information"
+        echo "✅ Docker images and Git tag now point to the same commit: ${RELEASE_SHA}"
