@@ -481,26 +481,11 @@ jobs:
         docker buildx create --use --name multiarch-builder --driver docker-container
         docker buildx inspect --bootstrap
 
-        echo "🐳 Building versioned production image..."
-        # Build and push versioned production image with clean manifest
+        echo "🐳 Building and pushing both versioned and latest images simultaneously..."
+        # Build once and push both tags simultaneously to ensure identical timing and SHA
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
-          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-          --build-arg VERSION=${VERSION} \
-          --build-arg REVISION=${RELEASE_SHA} \
-          --label org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-          --label org.opencontainers.image.version=${VERSION} \
-          --label org.opencontainers.image.revision=${RELEASE_SHA} \
-          --push \
-          --provenance=false \
-          --sbom=false \
-          .
-
-        echo "🐳 Building latest production image..."
-        # Build and push latest image with clean manifest
-        docker buildx build \
-          --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest \
           --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
           --build-arg VERSION=${VERSION} \
