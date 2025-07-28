@@ -3,10 +3,11 @@ Simple FastAPI test application for HTTP endpoint testing
 Provides basic endpoints that return 200 status codes
 """
 
+import os
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import uvicorn
-import os
 
 app = FastAPI(
     title="Test API",
@@ -59,11 +60,13 @@ async def api_health():
 @app.get("/metrics")
 async def metrics():
     """Metrics endpoint (Prometheus-style)"""
-    return JSONResponse(
-        content="# HELP test_api_requests_total Total requests\n# TYPE test_api_requests_total counter\ntest_api_requests_total 42\n",
-        media_type="text/plain"
+    content = (
+        "# HELP test_api_requests_total Total requests\n"
+        "# TYPE test_api_requests_total counter\n"
+        "test_api_requests_total 42\n"
     )
+    return JSONResponse(content=content, media_type="text/plain")
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8080))
+    port = int(os.getenv("PORT", "8080"))
     uvicorn.run(app, host="0.0.0.0", port=port)
