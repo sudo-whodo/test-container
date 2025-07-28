@@ -52,10 +52,9 @@ jobs:
         INTERVAL=30
 
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          CHECKS=$(gh api repos/${{ github.repository }}/commits/${{ github.event.pull_request.head.sha }}/check-runs --jq '.check_runs[] | select(.name != "dependabot-auto-merge") | .status')
-
-          PENDING_CHECKS=$(echo "$CHECKS" | grep -c "in_progress\|queued" || echo "0")
-          FAILED_CHECKS=$(echo "$CHECKS" | grep -c "failure" || echo "0")
+          # Get check status counts directly without storing in variable
+          PENDING_CHECKS=$(gh api repos/${{ github.repository }}/commits/${{ github.event.pull_request.head.sha }}/check-runs --jq '[.check_runs[] | select(.name != "dependabot-auto-merge") | select(.status == "in_progress" or .status == "queued")] | length')
+          FAILED_CHECKS=$(gh api repos/${{ github.repository }}/commits/${{ github.event.pull_request.head.sha }}/check-runs --jq '[.check_runs[] | select(.name != "dependabot-auto-merge") | select(.conclusion == "failure")] | length')
 
           echo "Pending: $PENDING_CHECKS, Failed: $FAILED_CHECKS"
 
