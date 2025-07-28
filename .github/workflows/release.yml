@@ -67,17 +67,24 @@ jobs:
     - name: Calculate RC version
       id: version
       run: |
-        # Get the latest tag or default to 0.0.0
-        CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
-        echo "Current version: $CURRENT_VERSION"
+        # Get the latest production tag (exclude RC tags) or default to 0.0.0
+        CURRENT_VERSION=$(git tag -l 'v*' | grep -v 'rc' | sort -V | tail -1 | sed 's/^v//' 2>/dev/null || echo "0.0.0")
+        echo "Current production version: $CURRENT_VERSION"
 
         # Ensure we have a valid version format
         if [ -z "$CURRENT_VERSION" ] || [ "$CURRENT_VERSION" = "" ]; then
           CURRENT_VERSION="0.0.0"
         fi
 
-        # Parse current version
-        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        # Parse current version - handle case where version might be empty or malformed
+        if [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        else
+          echo "Invalid version format, defaulting to 0.0.0"
+          MAJOR=0
+          MINOR=0
+          PATCH=0
+        fi
 
         # Ensure all version parts are numbers
         MAJOR=${MAJOR:-0}
