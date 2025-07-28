@@ -1,3 +1,10 @@
+## [0.3.5](https://github.com/sudo-whodo/test-container/compare/v0.3.4...v0.3.5) (2025-07-28)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** add release rollback on container build failure ([b2a5074](https://github.com/sudo-whodo/test-container/commit/b2a5074c949dd16741fc131ddd97fed632e8ec68))
+
 ## [0.3.4](https://github.com/sudo-whodo/test-container/compare/v0.3.3...v0.3.4) (2025-07-28)
 
 
