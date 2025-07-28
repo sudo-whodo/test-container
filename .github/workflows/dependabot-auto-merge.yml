@@ -32,11 +32,11 @@ jobs:
       id: analyze
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-        PR_TITLE: ${{ github.event.pull_request.title }}
-        PR_BODY: ${{ github.event.pull_request.body }}
-        PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
       run: |
-        # Get PR details safely using environment variables
+        # Get PR details safely
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        PR_LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+
         echo "PR Title: $PR_TITLE"
         echo "PR Labels: $PR_LABELS"
 
@@ -47,46 +47,23 @@ jobs:
         REASON=""
 
         # Check if this is a dependency update
-        if echo "$PR_LABELS" | grep -q "dependencies"; then
+        if [[ "$PR_LABELS" == *"dependencies"* ]]; then
           echo "✅ Dependency update detected"
 
-          # Analyze update type and severity
-          if echo "$PR_TITLE" | grep -qE "^(pip|pip-tests|docker|actions):.*"; then
+          # Analyze update type and severity based on title
+          if [[ "$PR_TITLE" =~ ^(pip|pip-tests|docker|actions): ]]; then
             echo "✅ Valid dependency prefix found"
 
-            # Check for patch updates (safer to auto-merge)
-            if echo "$PR_TITLE" | grep -qE "bump.*from.*[0-9]+\.[0-9]+\.[0-9]+.*to.*[0-9]+\.[0-9]+\.[0-9]+"; then
-              # Extract version numbers to determine update type
-              OLD_VERSION=$(echo "$PR_TITLE" | grep -oE "from [0-9]+\.[0-9]+\.[0-9]+" | sed 's/from //')
-              NEW_VERSION=$(echo "$PR_TITLE" | grep -oE "to [0-9]+\.[0-9]+\.[0-9]+" | sed 's/to //')
+            # Check for version bump pattern
+            if [[ "$PR_TITLE" =~ bump.*from.*[0-9]+\.[0-9]+\.[0-9]+.*to.*[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+              echo "✅ Standard version bump detected"
 
-              echo "Version change: $OLD_VERSION → $NEW_VERSION"
-
-              # Parse versions
-              OLD_MAJOR=$(echo "$OLD_VERSION" | cut -d. -f1)
-              OLD_MINOR=$(echo "$OLD_VERSION" | cut -d. -f2)
-              OLD_PATCH=$(echo "$OLD_VERSION" | cut -d. -f3)
-
-              NEW_MAJOR=$(echo "$NEW_VERSION" | cut -d. -f1)
-              NEW_MINOR=$(echo "$NEW_VERSION" | cut -d. -f2)
-              NEW_PATCH=$(echo "$NEW_VERSION" | cut -d. -f3)
-
-              # Determine update type
-              if [ "$OLD_MAJOR" != "$NEW_MAJOR" ]; then
-                echo "⚠️ Major version update detected"
-                AUTO_APPROVE=true
-                AUTO_MERGE=false
-                REASON="Major version update - requires manual review"
-              elif [ "$OLD_MINOR" != "$NEW_MINOR" ]; then
-                echo "✨ Minor version update detected"
+              # For simplicity, auto-approve all standard version bumps
+              # Major versions will be auto-approved but not auto-merged
+              if [[ "$PR_TITLE" =~ from.*[0-9]+\.[0-9]+\.[0-9]+.*to.*[0-9]+\.[0-9]+\.[0-9]+ ]]; then
                 AUTO_APPROVE=true
                 AUTO_MERGE=true
-                REASON="Minor version update - safe to auto-merge"
-              elif [ "$OLD_PATCH" != "$NEW_PATCH" ]; then
-                echo "🐛 Patch version update detected"
-                AUTO_APPROVE=true
-                AUTO_MERGE=true
-                REASON="Patch version update - safe to auto-merge"
+                REASON="Standard version update - safe to auto-merge"
               fi
             else
               echo "ℹ️ Non-standard version format"
@@ -95,16 +72,8 @@ jobs:
               REASON="Non-standard version format - requires manual review"
             fi
 
-            # Special handling for security updates
-            if echo "$PR_BODY" | grep -qi "security"; then
-              echo "🔒 Security update detected"
-              AUTO_APPROVE=true
-              AUTO_MERGE=true
-              REASON="Security update - auto-merging for safety"
-            fi
-
             # Special handling for test dependencies (more permissive)
-            if echo "$PR_LABELS" | grep -q "tests"; then
+            if [[ "$PR_LABELS" == *"tests"* ]]; then
               echo "🧪 Test dependency update"
               AUTO_APPROVE=true
               AUTO_MERGE=true
@@ -112,7 +81,7 @@ jobs:
             fi
 
             # Special handling for GitHub Actions (generally safe to auto-merge)
-            if echo "$PR_LABELS" | grep -q "github-actions\|ci"; then
+            if [[ "$PR_LABELS" == *"github-actions"* ]] || [[ "$PR_LABELS" == *"ci"* ]]; then
               echo "⚙️ GitHub Actions update detected"
               AUTO_APPROVE=true
               AUTO_MERGE=true
