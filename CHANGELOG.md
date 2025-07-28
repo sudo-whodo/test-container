@@ -1,3 +1,10 @@
+## [0.4.0](https://github.com/sudo-whodo/test-container/compare/v0.3.6...v0.4.0) (2025-07-28)
+
+
+### 🚀 Features
+
+* **ci:** modernize Pylint workflow with pipx and smart file detection ([4c19f34](https://github.com/sudo-whodo/test-container/commit/4c19f3474f6bbbe521c9c90c00113940048c916a))
+
 ## [0.3.6](https://github.com/sudo-whodo/test-container/compare/v0.3.5...v0.3.6) (2025-07-28)
 
 
