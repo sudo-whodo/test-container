@@ -22,6 +22,28 @@ jobs:
       with:
         token: ${{ steps.app-token.outputs.token }}
 
+    - name: Analyze Dependabot PR for version bump
+      id: version-analysis
+      run: |
+        # For Dependabot PRs, default to patch version bump for dependency updates
+        echo "version_bump=patch" >> $GITHUB_OUTPUT
+        echo "release_type=patch" >> $GITHUB_OUTPUT
+
+        echo "🔍 Dependabot Version Analysis:"
+        echo "  Version Bump: patch"
+        echo "  Release Type: patch"
+        echo "  Reason: Dependency update (Dependabot PR)"
+
+    - name: Save Dependabot version info
+      run: |
+        mkdir -p .github/pr-analysis
+        echo "patch" > .github/pr-analysis/version-bump-${{ github.event.pull_request.number }}.txt
+        echo "patch" > .github/pr-analysis/release-type-${{ github.event.pull_request.number }}.txt
+
+        echo "📁 Saved Dependabot version analysis to:"
+        echo "  .github/pr-analysis/version-bump-${{ github.event.pull_request.number }}.txt"
+        echo "  .github/pr-analysis/release-type-${{ github.event.pull_request.number }}.txt"
+
     - name: Approve PR
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

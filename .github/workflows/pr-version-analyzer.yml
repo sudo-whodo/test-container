@@ -8,6 +8,7 @@ on:
 jobs:
   analyze-version:
     runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
 
     steps:
     - name: Generate GitHub App Token
