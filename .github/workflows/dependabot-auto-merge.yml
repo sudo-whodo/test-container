@@ -28,28 +28,16 @@ jobs:
 
     - name: Analyze Dependabot PR
       id: analyze
-      env:
-        GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
-        echo "Analyzing Dependabot PR..."
+        echo "Analyzing Dependabot PR"
         echo "Actor: ${{ github.actor }}"
 
-        # Simple logic - auto-approve and auto-merge all Dependabot PRs
-        # since this is a trusted bot and we have CI checks
-        AUTO_APPROVE=true
-        AUTO_MERGE=true
-        MERGE_METHOD=squash
-        REASON="Dependabot dependency update - safe to auto-merge"
+        echo "auto_approve=true" >> $GITHUB_OUTPUT
+        echo "auto_merge=true" >> $GITHUB_OUTPUT
+        echo "merge_method=squash" >> $GITHUB_OUTPUT
+        echo "reason=Dependabot dependency update" >> $GITHUB_OUTPUT
 
-        echo "auto_approve=${AUTO_APPROVE}" >> $GITHUB_OUTPUT
-        echo "auto_merge=${AUTO_MERGE}" >> $GITHUB_OUTPUT
-        echo "merge_method=${MERGE_METHOD}" >> $GITHUB_OUTPUT
-        echo "reason=${REASON}" >> $GITHUB_OUTPUT
-
-        echo "Analysis complete:"
-        echo "  Auto Approve: ${AUTO_APPROVE}"
-        echo "  Auto Merge: ${AUTO_MERGE}"
-        echo "  Merge Method: ${MERGE_METHOD}"
+        echo "Analysis complete - will auto-approve and auto-merge"
 
     - name: Wait for CI checks
       id: wait-for-ci-checks
@@ -57,26 +45,23 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
-        echo "Waiting for CI checks to complete..."
+        echo "Waiting for CI checks to complete"
 
-        # Wait for checks to complete (max 10 minutes)
         TIMEOUT=600
         ELAPSED=0
         INTERVAL=30
 
         while [ $ELAPSED -lt $TIMEOUT ]; do
-          # Get check runs for this commit
           CHECKS=$(gh api repos/${{ github.repository }}/commits/${{ github.event.pull_request.head.sha }}/check-runs --jq '.check_runs[] | select(.name != "dependabot-auto-merge") | .status')
 
-          # Count pending checks
           PENDING_CHECKS=$(echo "$CHECKS" | grep -c "in_progress\|queued" || echo "0")
           FAILED_CHECKS=$(echo "$CHECKS" | grep -c "failure" || echo "0")
 
-          echo "Pending checks: $PENDING_CHECKS, Failed checks: $FAILED_CHECKS"
+          echo "Pending: $PENDING_CHECKS, Failed: $FAILED_CHECKS"
 
           if [ "$PENDING_CHECKS" -eq 0 ]; then
             if [ "$FAILED_CHECKS" -eq 0 ]; then
-              echo "All checks passed!"
+              echo "All checks passed"
               echo "checks_passed=true" >> $GITHUB_OUTPUT
               break
             else
@@ -86,7 +71,7 @@ jobs:
             fi
           fi
 
-          echo "Waiting ${INTERVAL}s for checks to complete..."
+          echo "Waiting ${INTERVAL}s"
           sleep $INTERVAL
           ELAPSED=$((ELAPSED + INTERVAL))
         done
@@ -101,34 +86,22 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
-        echo "Auto-approving Dependabot PR..."
-
-        gh pr review ${{ github.event.pull_request.number }} \
-          --approve \
-          --body "Auto-approved by GitHub App - Dependabot dependency update"
+        echo "Auto-approving Dependabot PR"
+        gh pr review ${{ github.event.pull_request.number }} --approve --body "Auto-approved by GitHub App"
 
     - name: Merge PR
       if: steps.analyze.outputs.auto_merge == 'true' && steps.wait-for-ci-checks.outputs.checks_passed == 'true'
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
-        echo "Auto-merging Dependabot PR..."
-
-        # Add a comment before merging
-        gh pr comment ${{ github.event.pull_request.number }} \
-          --body "Auto-merging this Dependabot PR - all checks passed"
-
-        # Merge the PR
-        gh pr merge ${{ github.event.pull_request.number }} \
-          --${{ steps.analyze.outputs.merge_method }} \
-          --delete-branch
+        echo "Auto-merging Dependabot PR"
+        gh pr comment ${{ github.event.pull_request.number }} --body "Auto-merging - all checks passed"
+        gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch
 
     - name: Comment on checks failed
       if: steps.analyze.outputs.auto_approve == 'true' && steps.wait-for-ci-checks.outputs.checks_passed == 'false'
       env:
         GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       run: |
-        echo "Adding checks failed comment..."
-
-        gh pr comment ${{ github.event.pull_request.number }} \
-          --body "Auto-approval completed, but merge blocked due to failing CI checks"
+        echo "Adding checks failed comment"
+        gh pr comment ${{ github.event.pull_request.number }} --body "Auto-approval completed but merge blocked due to failing checks"
