@@ -157,17 +157,23 @@ jobs:
 
         # Count issues by type (handle grep exit codes properly)
         set +e  # Don't exit on grep failures
-        ERROR_COUNT=$(grep -c "E[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
-        WARNING_COUNT=$(grep -c "W[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
-        CONVENTION_COUNT=$(grep -c "C[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
-        REFACTOR_COUNT=$(grep -c "R[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null || echo "0")
+        ERROR_COUNT=$(grep -c "E[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null)
+        WARNING_COUNT=$(grep -c "W[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null)
+        CONVENTION_COUNT=$(grep -c "C[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null)
+        REFACTOR_COUNT=$(grep -c "R[0-9][0-9][0-9][0-9]:" "${PYLINT_OUTPUT_FILE}" 2>/dev/null)
         set -e
 
-        # Ensure counts are valid numbers
+        # Ensure counts are valid numbers (grep returns empty on no matches)
         ERROR_COUNT=${ERROR_COUNT:-0}
         WARNING_COUNT=${WARNING_COUNT:-0}
         CONVENTION_COUNT=${CONVENTION_COUNT:-0}
         REFACTOR_COUNT=${REFACTOR_COUNT:-0}
+
+        # Validate that counts are actually numbers
+        if ! [[ "$ERROR_COUNT" =~ ^[0-9]+$ ]]; then ERROR_COUNT=0; fi
+        if ! [[ "$WARNING_COUNT" =~ ^[0-9]+$ ]]; then WARNING_COUNT=0; fi
+        if ! [[ "$CONVENTION_COUNT" =~ ^[0-9]+$ ]]; then CONVENTION_COUNT=0; fi
+        if ! [[ "$REFACTOR_COUNT" =~ ^[0-9]+$ ]]; then REFACTOR_COUNT=0; fi
 
         echo "error_count=${ERROR_COUNT}" >> $GITHUB_OUTPUT
         echo "warning_count=${WARNING_COUNT}" >> $GITHUB_OUTPUT
