@@ -14,6 +14,25 @@ jobs:
       checks: read
 
     steps:
+    - name: Debug secrets
+      run: |
+        echo "Checking secret availability..."
+        echo "APP_ID length: ${#APP_ID}"
+        echo "APP_PRIVATE_KEY length: ${#APP_PRIVATE_KEY}"
+        if [ -z "$APP_ID" ]; then
+          echo "❌ APP_ID is empty or not set"
+        else
+          echo "✅ APP_ID is available"
+        fi
+        if [ -z "$APP_PRIVATE_KEY" ]; then
+          echo "❌ APP_PRIVATE_KEY is empty or not set"
+        else
+          echo "✅ APP_PRIVATE_KEY is available"
+        fi
+      env:
+        APP_ID: ${{ secrets.APP_ID }}
+        APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+
     - name: Generate GitHub App Token
       id: app-token
       uses: actions/create-github-app-token@v1
