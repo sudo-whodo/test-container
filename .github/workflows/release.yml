@@ -128,24 +128,37 @@ jobs:
         VERSION=${{ steps.version.outputs.version_number }}
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
-        # Create multi-arch manifest for versioned RC image
-        docker buildx create --use --name multiarch-builder 2>/dev/null || true
+        # Remove any existing builder and create a clean one
+        docker buildx rm multiarch-builder 2>/dev/null || true
+        docker buildx create --use --name multiarch-builder --driver docker-container
+        docker buildx inspect --bootstrap
+
+        # Build and push versioned RC image with clean manifest
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
           --push \
+          --provenance=false \
+          --sbom=false \
           .
 
-        # Create multi-arch manifest for latest-rc image
+        # Build and push latest-rc image with clean manifest
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc \
           --push \
+          --provenance=false \
+          --sbom=false \
           .
 
-        echo "Built and pushed multi-arch RC Docker images:"
+        echo "Built and pushed clean multi-arch RC Docker images:"
         echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} (amd64, arm64)"
         echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc (amd64, arm64)"
+
+        # Verify manifests
+        echo "Verifying manifests:"
+        docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
+        docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc
 
     - name: Create RC GitHub release
       env:
@@ -483,24 +496,37 @@ jobs:
         VERSION=${{ steps.version.outputs.version_number }}
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
-        # Create multi-arch manifest for versioned production image
-        docker buildx create --use --name multiarch-builder 2>/dev/null || true
+        # Remove any existing builder and create a clean one
+        docker buildx rm multiarch-builder 2>/dev/null || true
+        docker buildx create --use --name multiarch-builder --driver docker-container
+        docker buildx inspect --bootstrap
+
+        # Build and push versioned production image with clean manifest
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
           --push \
+          --provenance=false \
+          --sbom=false \
           .
 
-        # Create multi-arch manifest for latest image
+        # Build and push latest image with clean manifest
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest \
           --push \
+          --provenance=false \
+          --sbom=false \
           .
 
-        echo "Built and pushed multi-arch production Docker images:"
+        echo "Built and pushed clean multi-arch production Docker images:"
         echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} (amd64, arm64)"
         echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest (amd64, arm64)"
+
+        # Verify manifests
+        echo "Verifying manifests:"
+        docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
+        docker buildx imagetools inspect ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest
 
     - name: Create production GitHub release
       if: steps.version.outputs.has_release == 'true'
