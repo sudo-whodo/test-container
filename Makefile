@@ -31,7 +31,15 @@ help: ## Show this help message
 
 build: ## Build the FastAPI test container image
 	@echo "🐳 Building FastAPI test container..."
-	podman build -t $(IMAGE_NAME) .
+	@VERSION=$$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.0.0-dev"); \
+	BUILD_DATE=$$(date -u +'%Y-%m-%dT%H:%M:%SZ'); \
+	REVISION=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \
+	echo "Building with version: $$VERSION, build date: $$BUILD_DATE, revision: $$REVISION"; \
+	podman build \
+		--build-arg VERSION=$$VERSION \
+		--build-arg BUILD_DATE=$$BUILD_DATE \
+		--build-arg REVISION=$$REVISION \
+		-t $(IMAGE_NAME) .
 	@echo "✅ Container image built successfully!"
 
 run: ## Run the FastAPI test container
