@@ -123,22 +123,29 @@ jobs:
         git push origin "$VERSION"
         echo "Created RC tag: $VERSION"
 
-    - name: Build and push Docker images for RC
+    - name: Build and push multi-arch Docker images for RC
       run: |
         VERSION=${{ steps.version.outputs.version_number }}
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
-        # Build and push versioned RC image
-        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} .
-        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
+        # Create multi-arch manifest for versioned RC image
+        docker buildx create --use --name multiarch-builder 2>/dev/null || true
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
+          --push \
+          .
 
-        # Build and push latest-rc image
-        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc .
-        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc
+        # Create multi-arch manifest for latest-rc image
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc \
+          --push \
+          .
 
-        echo "Built and pushed RC Docker images:"
-        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}"
-        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc"
+        echo "Built and pushed multi-arch RC Docker images:"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} (amd64, arm64)"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest-rc (amd64, arm64)"
 
     - name: Create RC GitHub release
       env:
@@ -470,23 +477,30 @@ jobs:
         git push origin "$VERSION"
         echo "Created production tag: $VERSION"
 
-    - name: Build and push Docker images for production
+    - name: Build and push multi-arch Docker images for production
       if: steps.version.outputs.has_release == 'true'
       run: |
         VERSION=${{ steps.version.outputs.version_number }}
         REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
-        # Build and push versioned production image
-        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} .
-        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}
+        # Create multi-arch manifest for versioned production image
+        docker buildx create --use --name multiarch-builder 2>/dev/null || true
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} \
+          --push \
+          .
 
-        # Build and push latest image
-        docker build -t ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest .
-        docker push ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest
+        # Create multi-arch manifest for latest image
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --tag ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest \
+          --push \
+          .
 
-        echo "Built and pushed production Docker images:"
-        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION}"
-        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest"
+        echo "Built and pushed multi-arch production Docker images:"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:${VERSION} (amd64, arm64)"
+        echo "  - ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:latest (amd64, arm64)"
 
     - name: Create production GitHub release
       if: steps.version.outputs.has_release == 'true'

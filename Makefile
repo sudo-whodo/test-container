@@ -5,7 +5,12 @@ CONTAINER_NAME := test-api
 IMAGE_NAME := localhost/test-api:latest
 PORT := 8080
 
-.PHONY: help build run stop clean logs status test all
+# Multi-architecture build variables
+PLATFORMS := linux/amd64,linux/arm64
+REGISTRY := localhost
+IMAGE_BASE := test-api
+
+.PHONY: help build run stop clean logs status test all build-multi build-arm build-x86
 
 # Default target
 all: build run
@@ -402,3 +407,165 @@ lint-help: ## Show Pylint help and available options
 	@echo "  - Pull requests to main branch"
 	@echo "  - Pushes to any branch"
 	@echo "  - Manual workflow dispatch"
+
+# Multi-architecture build targets
+build-multi: ## Build multi-architecture image (AMD64 + ARM64)
+	@echo "🏗️  Building multi-architecture container image..."
+	@echo "Platforms: $(PLATFORMS)"
+	@echo ""
+	@if command -v podman >/dev/null 2>&1; then \
+		echo "Using Podman for multi-arch build..."; \
+		podman build \
+			--platform $(PLATFORMS) \
+			--manifest $(REGISTRY)/$(IMAGE_BASE):latest \
+			.; \
+		echo "✅ Multi-architecture manifest created!"; \
+		echo "📋 Manifest details:"; \
+		podman manifest inspect $(REGISTRY)/$(IMAGE_BASE):latest; \
+	elif command -v docker >/dev/null 2>&1; then \
+		echo "Using Docker buildx for multi-arch build..."; \
+		docker buildx create --use --name multiarch-builder 2>/dev/null || true; \
+		docker buildx build \
+			--platform $(PLATFORMS) \
+			--tag $(REGISTRY)/$(IMAGE_BASE):latest \
+			--load \
+			.; \
+		echo "✅ Multi-architecture image built!"; \
+	else \
+		echo "❌ Neither podman nor docker found. Install one to build multi-arch images."; \
+		exit 1; \
+	fi
+
+build-arm: ## Build ARM64 image specifically
+	@echo "🦾 Building ARM64 container image..."
+	@if command -v podman >/dev/null 2>&1; then \
+		podman build --platform linux/arm64 -t $(REGISTRY)/$(IMAGE_BASE):arm64 .; \
+		echo "✅ ARM64 image built: $(REGISTRY)/$(IMAGE_BASE):arm64"; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker buildx build --platform linux/arm64 -t $(REGISTRY)/$(IMAGE_BASE):arm64 --load .; \
+		echo "✅ ARM64 image built: $(REGISTRY)/$(IMAGE_BASE):arm64"; \
+	else \
+		echo "❌ Neither podman nor docker found."; \
+		exit 1; \
+	fi
+
+build-x86: ## Build AMD64/x86_64 image specifically
+	@echo "💻 Building AMD64 container image..."
+	@if command -v podman >/dev/null 2>&1; then \
+		podman build --platform linux/amd64 -t $(REGISTRY)/$(IMAGE_BASE):amd64 .; \
+		echo "✅ AMD64 image built: $(REGISTRY)/$(IMAGE_BASE):amd64"; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker buildx build --platform linux/amd64 -t $(REGISTRY)/$(IMAGE_BASE):amd64 --load .; \
+		echo "✅ AMD64 image built: $(REGISTRY)/$(IMAGE_BASE):amd64"; \
+	else \
+		echo "❌ Neither podman nor docker found."; \
+		exit 1; \
+	fi
+
+build-push-multi: ## Build and push multi-architecture image to registry
+	@echo "🚀 Building and pushing multi-architecture image..."
+	@echo "⚠️  Make sure you're logged into your registry first!"
+	@echo ""
+	@read -p "Registry (e.g., docker.io/username, ghcr.io/username): " PUSH_REGISTRY; \
+	if [ -z "$$PUSH_REGISTRY" ]; then \
+		echo "❌ Registry cannot be empty"; \
+		exit 1; \
+	fi; \
+	echo "Building and pushing to: $$PUSH_REGISTRY/$(IMAGE_BASE):latest"; \
+	if command -v podman >/dev/null 2>&1; then \
+		podman build \
+			--platform $(PLATFORMS) \
+			--manifest $$PUSH_REGISTRY/$(IMAGE_BASE):latest \
+			.; \
+		podman manifest push $$PUSH_REGISTRY/$(IMAGE_BASE):latest; \
+		echo "✅ Multi-architecture image pushed to $$PUSH_REGISTRY/$(IMAGE_BASE):latest"; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker buildx create --use --name multiarch-builder 2>/dev/null || true; \
+		docker buildx build \
+			--platform $(PLATFORMS) \
+			--tag $$PUSH_REGISTRY/$(IMAGE_BASE):latest \
+			--push \
+			.; \
+		echo "✅ Multi-architecture image pushed to $$PUSH_REGISTRY/$(IMAGE_BASE):latest"; \
+	else \
+		echo "❌ Neither podman nor docker found."; \
+		exit 1; \
+	fi
+
+inspect-multi: ## Inspect multi-architecture manifest
+	@echo "🔍 Inspecting multi-architecture manifest..."
+	@if command -v podman >/dev/null 2>&1; then \
+		podman manifest inspect $(REGISTRY)/$(IMAGE_BASE):latest 2>/dev/null || \
+		echo "❌ No multi-arch manifest found. Run 'make build-multi' first."; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker buildx imagetools inspect $(REGISTRY)/$(IMAGE_BASE):latest 2>/dev/null || \
+		echo "❌ No multi-arch image found. Run 'make build-multi' first."; \
+	else \
+		echo "❌ Neither podman nor docker found."; \
+		exit 1; \
+	fi
+
+multi-help: ## Show multi-architecture build help
+	@echo "🏗️  Multi-Architecture Build Help"
+	@echo "=================================="
+	@echo ""
+	@echo "Available multi-arch targets:"
+	@echo "  make build-multi      # Build for AMD64 + ARM64"
+	@echo "  make build-arm        # Build ARM64 only"
+	@echo "  make build-x86        # Build AMD64 only"
+	@echo "  make build-push-multi # Build and push to registry"
+	@echo "  make inspect-multi    # Inspect multi-arch manifest"
+	@echo "  make multi-help       # Show this help"
+	@echo ""
+	@echo "Supported platforms: $(PLATFORMS)"
+	@echo ""
+	@echo "Prerequisites:"
+	@echo "  - Podman 4.0+ OR Docker with buildx"
+	@echo "  - QEMU for cross-platform emulation"
+	@echo ""
+	@echo "Examples:"
+	@echo "  # Build for both architectures locally"
+	@echo "  make build-multi"
+	@echo ""
+	@echo "  # Build and push to Docker Hub"
+	@echo "  docker login"
+	@echo "  make build-push-multi"
+	@echo ""
+	@echo "  # Build and push to GitHub Container Registry"
+	@echo "  echo \$$GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin"
+	@echo "  make build-push-multi"
+	@echo ""
+	@echo "  # Test ARM64 image on x86 machine"
+	@echo "  make build-arm"
+	@echo "  podman run --platform linux/arm64 $(REGISTRY)/$(IMAGE_BASE):arm64"
+
+setup-qemu: ## Setup QEMU for cross-platform builds
+	@echo "⚙️  Setting up QEMU for cross-platform builds..."
+	@if command -v docker >/dev/null 2>&1; then \
+		echo "Setting up Docker buildx with QEMU..."; \
+		docker run --rm --privileged multiarch/qemu-user-static --reset -p yes; \
+		docker buildx create --use --name multiarch-builder --driver docker-container 2>/dev/null || true; \
+		docker buildx inspect --bootstrap; \
+		echo "✅ Docker buildx with QEMU configured!"; \
+	elif command -v podman >/dev/null 2>&1; then \
+		echo "Setting up Podman with QEMU..."; \
+		if command -v qemu-user-static >/dev/null 2>&1; then \
+			echo "✅ QEMU already available"; \
+		else \
+			echo "Installing QEMU user static..."; \
+			if command -v apt-get >/dev/null 2>&1; then \
+				sudo apt-get update && sudo apt-get install -y qemu-user-static; \
+			elif command -v yum >/dev/null 2>&1; then \
+				sudo yum install -y qemu-user-static; \
+			elif command -v brew >/dev/null 2>&1; then \
+				brew install qemu; \
+			else \
+				echo "❌ Please install qemu-user-static manually"; \
+				exit 1; \
+			fi; \
+		fi; \
+		echo "✅ Podman with QEMU configured!"; \
+	else \
+		echo "❌ Neither podman nor docker found."; \
+		exit 1; \
+	fi

@@ -19,10 +19,23 @@ make test     # Test all endpoints
 make status   # Check container status
 ```
 
-### Manual Commands
+### Pull from Registry (Multi-Architecture)
 
 ```bash
-# Build the container
+# Pull the latest multi-architecture image
+docker pull ghcr.io/sudo-whodo/test-container/test-api:latest
+
+# Run the container (automatically selects correct architecture)
+docker run -d --name test-api -p 8080:8080 ghcr.io/sudo-whodo/test-container/test-api:latest
+
+# Test the API
+curl http://localhost:8080/health
+```
+
+### Manual Local Build
+
+```bash
+# Build the container locally
 podman build -t localhost/test-api:latest .
 
 # Run the container
@@ -61,6 +74,10 @@ The API provides the following endpoints, all returning HTTP 200:
 | `make pytest-setup` | Setup for pytest HTTP endpoint testing |
 | `make lint` | Run Pylint on all Python files |
 | `make lint-report` | Generate detailed Pylint report |
+| `make build-multi` | Build multi-architecture image (AMD64 + ARM64) |
+| `make build-arm` | Build ARM64 image specifically |
+| `make build-x86` | Build AMD64 image specifically |
+| `make multi-help` | Show multi-architecture build help |
 
 ## 🔍 Code Quality
 
@@ -86,6 +103,55 @@ make lint-config
 - **Push Events**: Linting runs on pushes to any branch
 - **Configuration**: Stored in `.config/.pylintrc`
 - **CI Integration**: Results posted as PR comments with pass/fail status
+
+## 🏗️ Multi-Architecture Support
+
+This container supports both **AMD64** and **ARM64** architectures and is automatically built for both platforms.
+
+### Automated Builds
+
+- **GitHub Actions**: Automatically builds multi-arch images on every release
+- **Platforms**: `linux/amd64`, `linux/arm64`
+- **Registry**: GitHub Container Registry (`ghcr.io`)
+
+### Local Multi-Architecture Builds
+
+```bash
+# Build for both AMD64 and ARM64
+make build-multi
+
+# Build specific architectures
+make build-arm    # ARM64 only
+make build-x86    # AMD64 only
+
+# Get help with multi-arch builds
+make multi-help
+
+# Setup QEMU for cross-platform builds (if needed)
+make setup-qemu
+```
+
+### Using Multi-Architecture Images
+
+```bash
+# Pull automatically selects correct architecture
+docker pull ghcr.io/sudo-whodo/test-container/test-api:latest
+
+# Force specific architecture if needed
+docker run --platform linux/amd64 ghcr.io/sudo-whodo/test-container/test-api:latest
+docker run --platform linux/arm64 ghcr.io/sudo-whodo/test-container/test-api:latest
+
+# Inspect multi-architecture manifest
+make inspect-multi
+```
+
+### Available Images
+
+| Image | Architectures | Description |
+|-------|---------------|-------------|
+| `ghcr.io/sudo-whodo/test-container/test-api:latest` | amd64, arm64 | Latest stable release |
+| `ghcr.io/sudo-whodo/test-container/test-api:v1.x.x` | amd64, arm64 | Specific version |
+| `ghcr.io/sudo-whodo/test-container/test-api:latest-rc` | amd64, arm64 | Release candidate |
 
 ## 🧪 Testing with pytest
 
