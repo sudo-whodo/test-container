@@ -1,3 +1,10 @@
+## [0.4.1](https://github.com/sudo-whodo/test-container/compare/v0.4.0...v0.4.1) (2025-07-28)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** improve Pylint output parsing and error handling ([abd6cdd](https://github.com/sudo-whodo/test-container/commit/abd6cdd074e198300bfa703a5bd393ba38c12923))
+
 ## [0.4.0](https://github.com/sudo-whodo/test-container/compare/v0.3.6...v0.4.0) (2025-07-28)
 
 
