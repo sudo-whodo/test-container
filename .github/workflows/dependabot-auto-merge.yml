@@ -14,25 +14,6 @@ jobs:
       checks: read
 
     steps:
-    - name: Debug secrets
-      run: |
-        echo "Checking secret availability..."
-        echo "APP_ID length: ${#APP_ID}"
-        echo "APP_PRIVATE_KEY length: ${#APP_PRIVATE_KEY}"
-        if [ -z "$APP_ID" ]; then
-          echo "❌ APP_ID is empty or not set"
-        else
-          echo "✅ APP_ID is available"
-        fi
-        if [ -z "$APP_PRIVATE_KEY" ]; then
-          echo "❌ APP_PRIVATE_KEY is empty or not set"
-        else
-          echo "✅ APP_PRIVATE_KEY is available"
-        fi
-      env:
-        APP_ID: ${{ secrets.APP_ID }}
-        APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
-
     - name: Generate GitHub App Token
       id: app-token
       uses: actions/create-github-app-token@v1
@@ -62,48 +43,62 @@ jobs:
         MERGE_METHOD="squash"
         REASON=""
 
-        # Check if this is a dependency update
-        if [[ "$PR_LABELS" == *"dependencies"* ]]; then
-          echo "✅ Dependency update detected"
+        # Check if this is a Dependabot PR by checking the actor
+        if [[ "${{ github.actor }}" == "dependabot[bot]" ]]; then
+          echo "✅ Dependabot PR detected"
 
-          # Analyze update type and severity based on title
-          if [[ "$PR_TITLE" =~ ^(pip|pip-tests|docker|actions): ]]; then
-            echo "✅ Valid dependency prefix found"
+          # Check if title contains dependency-related keywords
+          if [[ "$PR_TITLE" == *"bump"* ]] || [[ "$PR_TITLE" == *"update"* ]] || [[ "$PR_TITLE" == *"pip"* ]]; then
+            echo "✅ Dependency update detected in title"
 
-            # Check for version bump pattern
-            if [[ "$PR_TITLE" =~ bump.*from.*[0-9]+\.[0-9]+\.[0-9]+.*to.*[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-              echo "✅ Standard version bump detected"
+            # For group updates (multiple dependencies)
+            if [[ "$PR_TITLE" == *"group"* ]] && [[ "$PR_TITLE" == *"updates"* ]]; then
+              echo "📦 Group dependency update detected"
+              AUTO_APPROVE=true
+              AUTO_MERGE=true
+              REASON="Group dependency update - safe to auto-merge"
 
-              # For simplicity, auto-approve all standard version bumps
-              # Major versions will be auto-approved but not auto-merged
-              if [[ "$PR_TITLE" =~ from.*[0-9]+\.[0-9]+\.[0-9]+.*to.*[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-                AUTO_APPROVE=true
-                AUTO_MERGE=true
-                REASON="Standard version update - safe to auto-merge"
-              fi
+            # For single dependency updates
+            elif [[ "$PR_TITLE" == *"bump"* ]]; then
+              echo "📦 Single dependency update detected"
+              AUTO_APPROVE=true
+              AUTO_MERGE=true
+              REASON="Dependency update - safe to auto-merge"
+
+            # For any other dependency-related updates
             else
-              echo "ℹ️ Non-standard version format"
+              echo "📦 General dependency update detected"
               AUTO_APPROVE=true
               AUTO_MERGE=false
-              REASON="Non-standard version format - requires manual review"
+              REASON="Dependency update - requires manual review"
             fi
 
             # Special handling for test dependencies (more permissive)
-            if [[ "$PR_LABELS" == *"tests"* ]]; then
+            if [[ "$PR_TITLE" == *"test"* ]] || [[ "$PR_LABELS" == *"tests"* ]]; then
               echo "🧪 Test dependency update"
               AUTO_APPROVE=true
               AUTO_MERGE=true
               REASON="Test dependency - safe to auto-merge"
             fi
 
-            # Special handling for GitHub Actions (generally safe to auto-merge)
-            if [[ "$PR_LABELS" == *"github-actions"* ]] || [[ "$PR_LABELS" == *"ci"* ]]; then
+            # Special handling for GitHub Actions
+            if [[ "$PR_TITLE" == *"actions"* ]] || [[ "$PR_LABELS" == *"github-actions"* ]]; then
               echo "⚙️ GitHub Actions update detected"
               AUTO_APPROVE=true
               AUTO_MERGE=true
               REASON="GitHub Actions update - safe to auto-merge"
             fi
+          else
+            echo "ℹ️ Non-dependency update"
+            AUTO_APPROVE=false
+            AUTO_MERGE=false
+            REASON="Not a recognized dependency update"
           fi
+        else
+          echo "❌ Not a Dependabot PR"
+          AUTO_APPROVE=false
+          AUTO_MERGE=false
+          REASON="Not a Dependabot PR"
         fi
 
         echo "auto_approve=${AUTO_APPROVE}" >> $GITHUB_OUTPUT
