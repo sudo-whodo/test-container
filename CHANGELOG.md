@@ -1,3 +1,11 @@
+## [0.5.0](https://github.com/sudo-whodo/test-container/compare/v0.4.1...v0.5.0) (2025-07-29)
+
+
+### 🚀 Features
+
+* add enhanced API v1 info endpoint with detailed service information ([abd1223](https://github.com/sudo-whodo/test-container/commit/abd122336508983108933bc25860377d5dac1ea7))
+* enhance test workflow with comprehensive PR and push triggers ([07ad761](https://github.com/sudo-whodo/test-container/commit/07ad7612eb838bb48bcf6732d0bbdbc7df01585f))
+
 ## [0.4.1](https://github.com/sudo-whodo/test-container/compare/v0.4.0...v0.4.1) (2025-07-28)
 
 
