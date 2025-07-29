@@ -123,7 +123,9 @@ async def root():
             "/status",
             "/api/v1/health",
             "/metrics",
-            "/config"
+            "/config",
+            "/docs",
+            "/api/v1/info"
         ]
     }
 
@@ -251,6 +253,46 @@ async def config():
     return {
         "configuration": safe_config,
         "note": "Only non-sensitive configuration is displayed"
+    }
+
+
+@app.get("/api/v1/info")
+async def api_info():
+    """API v1 information endpoint with detailed service information"""
+    logger.debug("API v1 info endpoint accessed")
+
+    import platform
+    import datetime
+
+    return {
+        "api": {
+            "version": "v1",
+            "service": settings.app_name,
+            "service_version": settings.app_version,
+            "environment": settings.environment,
+            "description": "Enhanced test API with comprehensive monitoring endpoints"
+        },
+        "server": {
+            "platform": platform.system(),
+            "python_version": platform.python_version(),
+            "architecture": platform.machine(),
+            "hostname": platform.node()
+        },
+        "features": {
+            "health_monitoring": True,
+            "metrics_collection": True,
+            "graceful_shutdown": True,
+            "structured_logging": True,
+            "configuration_management": True
+        },
+        "endpoints": {
+            "health": ["/health", "/api/v1/health"],
+            "monitoring": ["/status", "/metrics"],
+            "configuration": ["/config"],
+            "documentation": ["/docs", "/redoc"],
+            "api": ["/api/v1/info"]
+        },
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
     }
 
 
